@@ -151,9 +151,7 @@ namespace ExpiePettingMod
             Vector3 mouseWorld3D = Camera.main.ScreenToWorldPoint(Input.mousePosition);
             Vector2 mouseWorld = new Vector2(mouseWorld3D.x, mouseWorld3D.y);
 
-            float mouseDelta = Vector2.Distance(_lastMouseWorldPos, mouseWorld);
-            float mouseSpeed = mouseDelta / Time.deltaTime;
-            bool isPettingSpeed = mouseSpeed > 0.08f && mouseSpeed < 25f;
+            bool isPettingSpeed = true;
 
             Vector2 limbPos = _grabbedLimb.rb.position;
             Vector2 targetPos = mouseWorld - _grabOffset;
