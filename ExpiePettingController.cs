@@ -69,10 +69,9 @@ namespace ExpiePettingMod
                 return;
             }
 
-            bool modifierPressed = Plugin.Cfg.ModifierKey.Value == KeyCode.None || Input.GetKey(Plugin.Cfg.ModifierKey.Value);
-            bool mousePressed = Input.GetMouseButton(0);
+            bool interactionPressed = Plugin.Cfg.ModifierKey.Value == KeyCode.None ? Input.GetMouseButton(0) : Input.GetKey(Plugin.Cfg.ModifierKey.Value);
 
-            if (modifierPressed && mousePressed)
+            if (interactionPressed)
             {
                 if (!_isDragging)
                 {
@@ -124,11 +123,19 @@ namespace ExpiePettingMod
                     _lastActivePetTime = 0f;
                     _isPettingHealthy = true;
 
-                    // If standing, temporarily simulate ONLY the grabbed limb
+                    // If standing, temporarily simulate ONLY if it's a non-vital extremity (arms or legs) to prevent glitching
                     if (limb.body != null && limb.body.standing)
                     {
-                        _grabbedLimbSimulated = true;
-                        limb.rb.simulated = true;
+                        bool isTuggableLimb = limb.isArm || limb.isLegLimb || (!limb.isVital && !limb.isHead && !limb.isAbdomen);
+                        if (isTuggableLimb)
+                        {
+                            _grabbedLimbSimulated = true;
+                            limb.rb.simulated = true;
+                        }
+                        else
+                        {
+                            _grabbedLimbSimulated = false;
+                        }
                     }
                     else
                     {
