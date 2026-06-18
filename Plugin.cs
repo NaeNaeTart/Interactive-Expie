@@ -53,5 +53,27 @@ namespace ExpiePettingMod
             return true;
         }
     }
+
+    [HarmonyPatch(typeof(MoodleManager), "AddAllMoodles")]
+    public static class MoodleManagerPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(MoodleManager __instance)
+        {
+            if (ExpiePettingController.Instance != null && ExpiePettingController.Instance.IsPettingRecently)
+            {
+                if (ExpiePettingController.Instance.IsPettingHealthy)
+                {
+                    // intensity 5 gives a positive green/happy background, "happy" is the built-in cute smiley icon
+                    __instance.AddMoodle(5, "happy", "Being Petted", "This expie is actively receiving gentle, comforting physical contact, lowering stress and reducing pain.");
+                }
+                else
+                {
+                    // intensity 3 gives a critical/warning red background, "pain" or "shock" icon
+                    __instance.AddMoodle(3, "pain", "Irritated Wounds", "This expie's raw skin wounds are being touched or rubbed, causing intense physical distress!");
+                }
+            }
+        }
+    }
 }
 

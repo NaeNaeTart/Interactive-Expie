@@ -17,6 +17,11 @@ namespace ExpiePettingMod
         private float _painPetTimer;
         private float _lastLineTriggerTime;
         private bool _grabbedLimbSimulated;
+        private float _lastActivePetTime;
+        private bool _isPettingHealthy;
+
+        public bool IsPettingRecently => (Time.time - _lastActivePetTime) < 1.5f;
+        public bool IsPettingHealthy => _isPettingHealthy;
 
         private static readonly List<string> HappyLines = new List<string>
         {
@@ -116,6 +121,8 @@ namespace ExpiePettingMod
                     _painPetTimer = 0f;
                     _lastMouseWorldPos = mouseWorld;
                     _lastLineTriggerTime = Time.time;
+                    _lastActivePetTime = 0f;
+                    _isPettingHealthy = true;
 
                     // If standing, temporarily simulate ONLY the grabbed limb
                     if (limb.body != null && limb.body.standing)
@@ -146,7 +153,7 @@ namespace ExpiePettingMod
 
             float mouseDelta = Vector2.Distance(_lastMouseWorldPos, mouseWorld);
             float mouseSpeed = mouseDelta / Time.deltaTime;
-            bool isPettingSpeed = mouseSpeed > 0.35f && mouseSpeed < 14f;
+            bool isPettingSpeed = mouseSpeed > 0.08f && mouseSpeed < 25f;
 
             Vector2 limbPos = _grabbedLimb.rb.position;
             Vector2 targetPos = mouseWorld - _grabOffset;
@@ -203,6 +210,26 @@ namespace ExpiePettingMod
             // 3. Petting detection based on cursor movement back and forth
             if (isPettingSpeed && dist < releaseThreshold * 0.85f)
             {
+                bool wasPettingRecently = IsPettingRecently;
+                _lastActivePetTime = Time.time;
+                _isPettingHealthy = (_grabbedLimb.skinHealth >= 95f);
+
+                if (!wasPettingRecently)
+                {
+                    // Instant physical feedback upon starting petting
+                    if (_isPettingHealthy)
+                    {
+                        if (_grabbedLimb.body != null && _grabbedLimb.body.conscious)
+                        {
+                            Sound.Play("exert" + UnityEngine.Random.Range(1, 5), _grabbedLimb.rb.position, volume: 0.08f, pitchShift: true, pitch: 1.4f);
+                        }
+                    }
+                    else
+                    {
+                        TriggerPainReaction(_grabbedLimb);
+                    }
+                }
+
                 // Trigger a tiny micro-movement tremor to show physical touch feedback
                 _grabbedLimb.rb.AddForce(UnityEngine.Random.insideUnitCircle * 5f * _grabbedLimb.rb.mass);
 
@@ -312,6 +339,7 @@ namespace ExpiePettingMod
             _grabbedLimbSimulated = false;
             _happyPetTimer = 0f;
             _painPetTimer = 0f;
+            _lastActivePetTime = 0f;
         }
     }
 }
