@@ -75,5 +75,26 @@ namespace ExpiePettingMod
             }
         }
     }
+
+    [HarmonyPatch(typeof(Body), "HandleVisuals", new System.Type[] { typeof(Painkillers) })]
+    public static class RestoreStandingSimulatedLimbsPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(Body __instance)
+        {
+            if (__instance.standing && __instance.limbs != null)
+            {
+                foreach (Limb limb in __instance.limbs)
+                {
+                    if (limb != null && !limb.dismembered && limb.rb != null && limb.rb.simulated)
+                    {
+                        // Sync visual transform position and rotation with Rigidbody2D physics state
+                        limb.transform.position = limb.rb.position;
+                        limb.transform.eulerAngles = new Vector3(0f, 0f, limb.rb.rotation);
+                    }
+                }
+            }
+        }
+    }
 }
 

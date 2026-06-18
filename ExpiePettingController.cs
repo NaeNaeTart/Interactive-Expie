@@ -69,18 +69,12 @@ namespace ExpiePettingMod
                 return;
             }
 
-            bool interactionPressed = Plugin.Cfg.ModifierKey.Value == KeyCode.None ? Input.GetMouseButton(0) : Input.GetKey(Plugin.Cfg.ModifierKey.Value);
+            bool altPressed = Plugin.Cfg.ModifierKey.Value == KeyCode.None ? Input.GetMouseButton(0) : Input.GetKey(Plugin.Cfg.ModifierKey.Value);
 
-            if (interactionPressed)
+            if (altPressed)
             {
-                if (!_isDragging)
-                {
-                    TryGrabLimb();
-                }
-                else
-                {
-                    UpdateDragAndPet(activeBody);
-                }
+                // Active petting and hovered limb detection
+                UpdateHoverAndPet(activeBody);
             }
             else
             {
@@ -90,17 +84,27 @@ namespace ExpiePettingMod
 
         private Body? FindActiveBody()
         {
-            return FindObjectOfType<Body>();
+            // Find all Body components in the scene
+            Body[] bodies = FindObjectsOfType<Body>();
+            if (bodies == null || bodies.Length == 0) return null;
+
+            // Filter out the player's Body to always target the Expie/Subject
+            Body? playerBody = (PlayerCamera.main != null) ? PlayerCamera.main.body : null;
+            foreach (Body b in bodies)
+            {
+                if (b != playerBody)
+                {
+                    return b;
+                }
+            }
+
+            // Fallback to playerBody if it's the only one found
+            return playerBody ?? bodies[0];
         }
 
-        private void TryGrabLimb()
+        private Limb? DetectLimbAt(Vector2 mouseWorld, Body body)
         {
-            if (Camera.main == null) return;
-
-            Vector3 mouseWorld3D = Camera.main.ScreenToWorldPoint(Input.mousePosition);
-            Vector2 mouseWorld = new Vector2(mouseWorld3D.x, mouseWorld3D.y);
-
-            // Perform 2D raycast to detect limb colliders
+            // First attempt: Physics Raycast (works when limbs are simulated / ragdoll)
             RaycastHit2D hit = Physics2D.Raycast(mouseWorld, Vector2.zero);
             if (hit.collider != null)
             {
@@ -109,82 +113,204 @@ namespace ExpiePettingMod
                 {
                     limb = hit.collider.GetComponentInParent<Limb>();
                 }
-
-                if (limb != null && !limb.dismembered)
+                if (limb != null && !limb.dismembered && limb.body == body)
                 {
-                    _grabbedLimb = limb;
-                    _grabOffset = mouseWorld - limb.rb.position;
-                    _isDragging = true;
-                    _stretchSoundCooldown = 0f;
-                    _happyPetTimer = 0f;
-                    _painPetTimer = 0f;
-                    _lastMouseWorldPos = mouseWorld;
-                    _lastLineTriggerTime = Time.time;
-                    _lastActivePetTime = 0f;
-                    _isPettingHealthy = true;
+                    return limb;
+                }
+            }
 
-                    // If standing, temporarily simulate ONLY if it's a non-vital extremity (arms or legs) to prevent glitching
-                    if (limb.body != null && limb.body.standing)
+            // Second attempt (Fallback): SpriteRenderer 2D Bounds Check (essential when standing up and simulated = false)
+            if (body.limbs != null)
+            {
+                Limb? closestLimb = null;
+                float closestDist = float.MaxValue;
+
+                foreach (Limb limb in body.limbs)
+                {
+                    if (limb == null || limb.dismembered) continue;
+
+                    SpriteRenderer sr = limb.GetComponent<SpriteRenderer>();
+                    if (sr != null)
                     {
-                        bool isTuggableLimb = limb.isArm || limb.isLegLimb || (!limb.isVital && !limb.isHead && !limb.isAbdomen);
-                        if (isTuggableLimb)
+                        Bounds bounds = sr.bounds;
+                        // Expand bounds slightly to make hovering/touching much more forgiving
+                        bounds.Expand(0.18f);
+
+                        // Pure 2D bounds check to prevent flat 2D sprite Z-axis precision bugs
+                        if (mouseWorld.x >= bounds.min.x && mouseWorld.x <= bounds.max.x &&
+                            mouseWorld.y >= bounds.min.y && mouseWorld.y <= bounds.max.y)
                         {
-                            _grabbedLimbSimulated = true;
-                            limb.rb.simulated = true;
+                            float dist = Vector2.Distance(mouseWorld, limb.transform.position);
+                            if (dist < closestDist)
+                            {
+                                closestDist = dist;
+                                closestLimb = limb;
+                            }
+                        }
+                    }
+                }
+                return closestLimb;
+            }
+
+            return null;
+        }
+
+        private void UpdateHoverAndPet(Body body)
+        {
+            if (Camera.main == null) return;
+
+            Vector3 mouseWorld3D = Camera.main.ScreenToWorldPoint(Input.mousePosition);
+            Vector2 mouseWorld = new Vector2(mouseWorld3D.x, mouseWorld3D.y);
+
+            // 1. Detect hovered limb (robust check supporting non-simulated standing limbs)
+            Limb? hoveredLimb = DetectLimbAt(mouseWorld, body);
+
+            // 2. Handle Petting (Requires only Alt, doesn't require Click)
+            if (hoveredLimb != null)
+            {
+                bool wasPettingRecently = IsPettingRecently;
+                _lastActivePetTime = Time.time;
+                _isPettingHealthy = (hoveredLimb.skinHealth >= 95f);
+
+                if (!wasPettingRecently)
+                {
+                    // Instant physical feedback upon starting petting
+                    if (_isPettingHealthy)
+                    {
+                        if (hoveredLimb.body != null && hoveredLimb.body.conscious)
+                        {
+                            Sound.Play("exert" + UnityEngine.Random.Range(1, 5), hoveredLimb.rb.position, volume: 0.08f, pitchShift: true, pitch: 1.4f);
+                        }
+                    }
+                    else
+                    {
+                        TriggerPainReaction(hoveredLimb);
+                    }
+                }
+
+                // Trigger gentle organic micro-wiggle tremor on the hovered limb (only if simulated!)
+                if (hoveredLimb.rb.simulated)
+                {
+                    hoveredLimb.rb.AddForce(UnityEngine.Random.insideUnitCircle * 0.4f * hoveredLimb.rb.mass, ForceMode2D.Impulse);
+                }
+
+                // Apply petting vitals updates
+                if (hoveredLimb.skinHealth >= 95f)
+                {
+                    // Case A: Healthy Petting!
+                    hoveredLimb.pain = Mathf.Max(0f, hoveredLimb.pain - Time.deltaTime * 7.5f);
+                    body.happiness = Mathf.Min(100f, body.happiness + Time.deltaTime * Plugin.Cfg.HappinessGainRate.Value);
+                    body.traumaAmount = Mathf.Max(0f, body.traumaAmount - Time.deltaTime * Plugin.Cfg.StressDecreaseRate.Value);
+
+                    _happyPetTimer += Time.deltaTime;
+                    if (_happyPetTimer >= UnityEngine.Random.Range(2.0f, 3.5f))
+                    {
+                        _happyPetTimer = 0f;
+                        TriggerHappyReaction(hoveredLimb);
+                    }
+                }
+                else
+                {
+                    // Case B: Painful touch on skin wounds/burns!
+                    hoveredLimb.pain = Mathf.Min(100f, hoveredLimb.pain + Time.deltaTime * Plugin.Cfg.PainIncreaseRate.Value);
+                    body.shock = Mathf.Min(100f, body.shock + Time.deltaTime * 7.5f);
+                    body.happiness = Mathf.Max(-100f, body.happiness - Time.deltaTime * 12f);
+
+                    _painPetTimer += Time.deltaTime;
+                    if (_painPetTimer >= UnityEngine.Random.Range(0.8f, 1.5f))
+                    {
+                        _painPetTimer = 0f;
+                        TriggerPainReaction(hoveredLimb);
+                    }
+                }
+            }
+
+            // 3. Handle Grabbing/Dragging (Requires BOTH Alt and Left Click)
+            bool clickPressed = Input.GetMouseButton(0);
+
+            if (clickPressed)
+            {
+                if (!_isDragging)
+                {
+                    // Try to start dragging the hovered limb (if any)
+                    if (hoveredLimb != null)
+                    {
+                        _grabbedLimb = hoveredLimb;
+                        _grabOffset = mouseWorld - hoveredLimb.rb.position;
+                        _isDragging = true;
+                        _stretchSoundCooldown = 0f;
+                        _lastMouseWorldPos = mouseWorld;
+                        _lastLineTriggerTime = Time.time;
+
+                        // If standing, temporarily simulate ONLY if it's a non-vital extremity (arms or legs) to prevent glitching
+                        if (hoveredLimb.body != null && hoveredLimb.body.standing)
+                        {
+                            bool isTuggableLimb = hoveredLimb.isArm || hoveredLimb.isLegLimb || (!hoveredLimb.isVital && !hoveredLimb.isHead && !hoveredLimb.isAbdomen);
+                            if (isTuggableLimb)
+                            {
+                                _grabbedLimbSimulated = true;
+                                hoveredLimb.rb.simulated = true;
+                            }
+                            else
+                            {
+                                _grabbedLimbSimulated = false;
+                            }
                         }
                         else
                         {
                             _grabbedLimbSimulated = false;
                         }
                     }
-                    else
-                    {
-                        _grabbedLimbSimulated = false;
-                    }
+                }
+                else
+                {
+                    // Update active drag/tug physics
+                    UpdateActiveDrag(mouseWorld, body);
                 }
             }
+            else
+            {
+                // Release physical drag if Left Click is released (but keep petting active if holding Alt!)
+                ReleaseActiveDragOnly();
+            }
+
+            _lastMouseWorldPos = mouseWorld;
         }
 
-        private void UpdateDragAndPet(Body body)
+        private void UpdateActiveDrag(Vector2 mouseWorld, Body body)
         {
             if (_grabbedLimb == null || _grabbedLimb.dismembered || !_grabbedLimb.gameObject.activeInHierarchy || _grabbedLimb.body != body)
             {
-                ReleaseGrab();
+                ReleaseActiveDragOnly();
                 return;
             }
-
-            if (Camera.main == null) return;
-
-            Vector3 mouseWorld3D = Camera.main.ScreenToWorldPoint(Input.mousePosition);
-            Vector2 mouseWorld = new Vector2(mouseWorld3D.x, mouseWorld3D.y);
-
-            bool isPettingSpeed = true;
 
             Vector2 limbPos = _grabbedLimb.rb.position;
             Vector2 targetPos = mouseWorld - _grabOffset;
             Vector2 diff = targetPos - limbPos;
             float dist = diff.magnitude;
 
-            // ⚠️ Gentle Constraint: Automatically release if pulled too hard (grip slips!)
-            // We expand the threshold while actively petting/stroking back and forth so the grip doesn't slip off.
             float maxAllowedDistance = Plugin.Cfg.AutoReleaseDistance.Value;
-            float releaseThreshold = isPettingSpeed ? maxAllowedDistance * 2.2f : maxAllowedDistance;
+            float releaseThreshold = maxAllowedDistance * 2.2f;
 
             if (dist > releaseThreshold)
             {
                 // Play slipping/stretch sound on release
                 Sound.Play("stretch", limbPos, volume: 0.35f, pitchShift: true);
-                ReleaseGrab();
+                ReleaseActiveDragOnly();
                 return;
             }
 
-            // 1. Apply physical spring force to "tug" the body part
-            float springK = Plugin.Cfg.PullStrength.Value;
-            float damper = 9.5f; // Cushioned dampening for ultra soft touch
-            Vector2 force = diff * springK - _grabbedLimb.rb.velocity * damper;
-            _grabbedLimb.rb.AddForce(force * _grabbedLimb.rb.mass);
+            // Apply physical spring force to "tug" the body part (only if simulated!)
+            if (_grabbedLimb.rb.simulated)
+            {
+                float springK = Plugin.Cfg.PullStrength.Value;
+                float damper = 9.5f; // Cushioned dampening for ultra soft touch
+                Vector2 force = diff * springK - _grabbedLimb.rb.velocity * damper;
+                _grabbedLimb.rb.AddForce(force * _grabbedLimb.rb.mass);
+            }
 
-            // 2. Play tension stretching sound and apply minor stress/pain if pulled near limit
+            // Play tension stretching sound and apply minor stress/pain if pulled near limit
             if (dist > maxAllowedDistance * 0.65f)
             {
                 _stretchSoundCooldown += Time.deltaTime;
@@ -211,71 +337,6 @@ namespace ExpiePettingMod
                     }
                 }
             }
-
-            // 3. Petting detection based on cursor movement back and forth
-            if (isPettingSpeed && dist < releaseThreshold * 0.85f)
-            {
-                bool wasPettingRecently = IsPettingRecently;
-                _lastActivePetTime = Time.time;
-                _isPettingHealthy = (_grabbedLimb.skinHealth >= 95f);
-
-                if (!wasPettingRecently)
-                {
-                    // Instant physical feedback upon starting petting
-                    if (_isPettingHealthy)
-                    {
-                        if (_grabbedLimb.body != null && _grabbedLimb.body.conscious)
-                        {
-                            Sound.Play("exert" + UnityEngine.Random.Range(1, 5), _grabbedLimb.rb.position, volume: 0.08f, pitchShift: true, pitch: 1.4f);
-                        }
-                    }
-                    else
-                    {
-                        TriggerPainReaction(_grabbedLimb);
-                    }
-                }
-
-                // Trigger a tiny micro-movement tremor to show physical touch feedback
-                _grabbedLimb.rb.AddForce(UnityEngine.Random.insideUnitCircle * 5f * _grabbedLimb.rb.mass);
-
-                if (_grabbedLimb.isHead)
-                {
-                    // Nuzzle up/lift head slightly towards the hand
-                    _grabbedLimb.rb.AddForce(Vector2.up * 6.5f * _grabbedLimb.rb.mass);
-                }
-
-                // Check skin damage
-                if (_grabbedLimb.skinHealth >= 95f)
-                {
-                    // Case A: Healthy Petting!
-                    _grabbedLimb.pain = Mathf.Max(0f, _grabbedLimb.pain - Time.deltaTime * 7.5f);
-                    body.happiness = Mathf.Min(100f, body.happiness + Time.deltaTime * Plugin.Cfg.HappinessGainRate.Value);
-                    body.traumaAmount = Mathf.Max(0f, body.traumaAmount - Time.deltaTime * Plugin.Cfg.StressDecreaseRate.Value);
-
-                    _happyPetTimer += Time.deltaTime;
-                    if (_happyPetTimer >= UnityEngine.Random.Range(2.0f, 3.5f))
-                    {
-                        _happyPetTimer = 0f;
-                        TriggerHappyReaction(_grabbedLimb);
-                    }
-                }
-                else
-                {
-                    // Case B: Painful touch on skin wounds/burns!
-                    _grabbedLimb.pain = Mathf.Min(100f, _grabbedLimb.pain + Time.deltaTime * Plugin.Cfg.PainIncreaseRate.Value);
-                    body.shock = Mathf.Min(100f, body.shock + Time.deltaTime * 7.5f);
-                    body.happiness = Mathf.Max(-100f, body.happiness - Time.deltaTime * 12f);
-
-                    _painPetTimer += Time.deltaTime;
-                    if (_painPetTimer >= UnityEngine.Random.Range(0.8f, 1.5f))
-                    {
-                        _painPetTimer = 0f;
-                        TriggerPainReaction(_grabbedLimb);
-                    }
-                }
-            }
-
-            _lastMouseWorldPos = mouseWorld;
         }
 
         private void TriggerHappyReaction(Limb limb)
@@ -331,7 +392,7 @@ namespace ExpiePettingMod
             }
         }
 
-        private void ReleaseGrab()
+        private void ReleaseActiveDragOnly()
         {
             if (_grabbedLimb != null && _grabbedLimbSimulated)
             {
@@ -342,6 +403,11 @@ namespace ExpiePettingMod
             _grabbedLimb = null;
             _isDragging = false;
             _grabbedLimbSimulated = false;
+        }
+
+        private void ReleaseGrab()
+        {
+            ReleaseActiveDragOnly();
             _happyPetTimer = 0f;
             _painPetTimer = 0f;
             _lastActivePetTime = 0f;
