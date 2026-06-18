@@ -16,6 +16,7 @@ namespace ExpiePettingMod
         private float _happyPetTimer;
         private float _painPetTimer;
         private float _lastLineTriggerTime;
+        private bool _tempSimulated;
 
         private static readonly List<string> HappyLines = new List<string>
         {
@@ -41,6 +42,9 @@ namespace ExpiePettingMod
             "Ow! That hurts!"
         };
 
+        // Expose interaction state to block clawing/punching
+        public bool IsInteracting => _isDragging || (Plugin.Cfg.ModifierKey.Value == KeyCode.None ? Input.GetMouseButton(0) : Input.GetKey(Plugin.Cfg.ModifierKey.Value));
+
         private void Awake()
         {
             if (Instance != null)
@@ -57,11 +61,22 @@ namespace ExpiePettingMod
             if (activeBody == null)
             {
                 ReleaseGrab();
+                RestoreLimbSimulation(null);
                 return;
             }
 
             bool modifierPressed = Plugin.Cfg.ModifierKey.Value == KeyCode.None || Input.GetKey(Plugin.Cfg.ModifierKey.Value);
             bool mousePressed = Input.GetMouseButton(0);
+
+            // Handle temporary limb simulation to allow dragging while standing
+            if (modifierPressed && activeBody.standing)
+            {
+                EnsureLimbSimulation(activeBody);
+            }
+            else if (!modifierPressed || !activeBody.standing)
+            {
+                RestoreLimbSimulation(activeBody);
+            }
 
             if (modifierPressed && mousePressed)
             {
@@ -82,8 +97,42 @@ namespace ExpiePettingMod
 
         private Body? FindActiveBody()
         {
-            // Find the active subject in the scene
             return FindObjectOfType<Body>();
+        }
+
+        private void EnsureLimbSimulation(Body body)
+        {
+            if (!_tempSimulated)
+            {
+                _tempSimulated = true;
+                foreach (Limb limb in body.limbs)
+                {
+                    if (limb != null && !limb.dismembered)
+                    {
+                        limb.rb.simulated = true;
+                    }
+                }
+            }
+        }
+
+        private void RestoreLimbSimulation(Body? body)
+        {
+            if (_tempSimulated)
+            {
+                _tempSimulated = false;
+                if (body != null && body.standing)
+                {
+                    foreach (Limb limb in body.limbs)
+                    {
+                        if (limb != null && !limb.dismembered)
+                        {
+                            limb.rb.simulated = false;
+                            limb.rb.velocity = Vector2.zero;
+                            limb.rb.angularVelocity = 0f;
+                        }
+                    }
+                }
+            }
         }
 
         private void TryGrabLimb()
@@ -135,32 +184,42 @@ namespace ExpiePettingMod
             Vector2 diff = targetPos - limbPos;
             float dist = diff.magnitude;
 
+            // ⚠️ Gentle Constraint: Automatically release if pulled too hard (grip slips!)
+            float maxAllowedDistance = Plugin.Cfg.AutoReleaseDistance.Value;
+            if (dist > maxAllowedDistance)
+            {
+                // Play slipping/stretch sound on release
+                Sound.Play("stretch", limbPos, volume: 0.35f, pitchShift: true);
+                ReleaseGrab();
+                return;
+            }
+
             // 1. Apply physical spring force to "tug" the body part
             float springK = Plugin.Cfg.PullStrength.Value;
-            float damper = 11f;
+            float damper = 9.5f; // Cushioned dampening for ultra soft touch
             Vector2 force = diff * springK - _grabbedLimb.rb.velocity * damper;
             _grabbedLimb.rb.AddForce(force * _grabbedLimb.rb.mass);
 
-            // 2. Play tension stretching sound and apply minor stress/pain if pulled hard
-            if (dist > 1.3f)
+            // 2. Play tension stretching sound and apply minor stress/pain if pulled near limit
+            if (dist > maxAllowedDistance * 0.65f)
             {
                 _stretchSoundCooldown += Time.deltaTime;
-                if (_stretchSoundCooldown >= 0.8f)
+                if (_stretchSoundCooldown >= 0.9f)
                 {
                     _stretchSoundCooldown = 0f;
-                    Sound.Play("stretch", limbPos, volume: 0.45f, pitchShift: true);
+                    Sound.Play("stretch", limbPos, volume: 0.3f, pitchShift: true);
                 }
 
-                if (dist > 2.2f)
+                if (dist > maxAllowedDistance * 0.85f)
                 {
                     // Gentle warning pain spike
-                    _grabbedLimb.pain = Mathf.Min(100f, _grabbedLimb.pain + Time.deltaTime * 3.5f);
+                    _grabbedLimb.pain = Mathf.Min(100f, _grabbedLimb.pain + Time.deltaTime * 2.5f);
                     
                     if (_grabbedLimb.broken || _grabbedLimb.dislocated)
                     {
-                        // Extremely painful to pull a broken/dislocated limb
-                        _grabbedLimb.pain = Mathf.Min(100f, _grabbedLimb.pain + Time.deltaTime * 18f);
-                        if (Time.time - _lastLineTriggerTime > 1.5f)
+                        // Painful to pull a broken/dislocated limb
+                        _grabbedLimb.pain = Mathf.Min(100f, _grabbedLimb.pain + Time.deltaTime * 12f);
+                        if (Time.time - _lastLineTriggerTime > 1.8f)
                         {
                             _lastLineTriggerTime = Time.time;
                             TriggerPainReaction(_grabbedLimb);
@@ -173,29 +232,27 @@ namespace ExpiePettingMod
             float mouseDelta = Vector2.Distance(_lastMouseWorldPos, mouseWorld);
             float mouseSpeed = mouseDelta / Time.deltaTime;
 
-            // A pleasing petting velocity is between 0.3 and 14 units/sec, and cursor must be near the limb center
-            if (mouseSpeed > 0.35f && mouseSpeed < 14f && dist < 1.3f)
+            if (mouseSpeed > 0.35f && mouseSpeed < 14f && dist < maxAllowedDistance * 0.7f)
             {
                 // Trigger a tiny micro-movement tremor to show physical touch feedback
-                _grabbedLimb.rb.AddForce(UnityEngine.Random.insideUnitCircle * 6.5f * _grabbedLimb.rb.mass);
+                _grabbedLimb.rb.AddForce(UnityEngine.Random.insideUnitCircle * 5f * _grabbedLimb.rb.mass);
 
                 if (_grabbedLimb.isHead)
                 {
                     // Nuzzle up/lift head slightly towards the hand
-                    _grabbedLimb.rb.AddForce(Vector2.up * 8f * _grabbedLimb.rb.mass);
+                    _grabbedLimb.rb.AddForce(Vector2.up * 6.5f * _grabbedLimb.rb.mass);
                 }
 
                 // Check skin damage
                 if (_grabbedLimb.skinHealth >= 95f)
                 {
                     // Case A: Healthy Petting!
-                    // Slowly soothe pain and increase happiness
-                    _grabbedLimb.pain = Mathf.Max(0f, _grabbedLimb.pain - Time.deltaTime * 6.5f);
+                    _grabbedLimb.pain = Mathf.Max(0f, _grabbedLimb.pain - Time.deltaTime * 7.5f);
                     body.happiness = Mathf.Min(100f, body.happiness + Time.deltaTime * Plugin.Cfg.HappinessGainRate.Value);
                     body.traumaAmount = Mathf.Max(0f, body.traumaAmount - Time.deltaTime * Plugin.Cfg.StressDecreaseRate.Value);
 
                     _happyPetTimer += Time.deltaTime;
-                    if (_happyPetTimer >= UnityEngine.Random.Range(2.2f, 3.8f))
+                    if (_happyPetTimer >= UnityEngine.Random.Range(2.0f, 3.5f))
                     {
                         _happyPetTimer = 0f;
                         TriggerHappyReaction(_grabbedLimb);
@@ -209,7 +266,7 @@ namespace ExpiePettingMod
                     body.happiness = Mathf.Max(-100f, body.happiness - Time.deltaTime * 12f);
 
                     _painPetTimer += Time.deltaTime;
-                    if (_painPetTimer >= UnityEngine.Random.Range(0.8f, 1.6f))
+                    if (_painPetTimer >= UnityEngine.Random.Range(0.8f, 1.5f))
                     {
                         _painPetTimer = 0f;
                         TriggerPainReaction(_grabbedLimb);
@@ -226,12 +283,11 @@ namespace ExpiePettingMod
 
             if (limb.body.conscious)
             {
-                // Play a cute soft vocal sigh/coo (exert sounds with raised pitch)
                 Sound.Play("exert" + UnityEngine.Random.Range(1, 5), limb.rb.position, volume: 0.12f, pitchShift: true, pitch: 1.35f);
 
                 if (UnityEngine.Random.value < 0.35f)
                 {
-                    Sound.Play("dogshake", limb.rb.position, volume: 0.15f, pitchShift: true);
+                    Sound.Play("dogshake", limb.rb.position, volume: 0.12f, pitchShift: true);
                 }
 
                 if (Plugin.Cfg.EnableHappyWhimpers.Value && limb.body.talker != null)
@@ -248,7 +304,6 @@ namespace ExpiePettingMod
 
             if (limb.body.conscious)
             {
-                // Play screaming and painful sounds
                 limb.body.Scream();
                 Sound.Play("exert" + UnityEngine.Random.Range(1, 5), limb.rb.position, volume: 0.85f, pitchShift: true, pitch: 0.85f);
                 
@@ -265,7 +320,6 @@ namespace ExpiePettingMod
             }
             else
             {
-                // Unconscious spasm & physical groan when touched on wounds
                 limb.rb.AddForce(UnityEngine.Random.insideUnitCircle * 26f * limb.rb.mass, ForceMode2D.Impulse);
                 if (limb.body.baseLimb != null)
                 {

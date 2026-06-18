@@ -38,4 +38,20 @@ namespace ExpiePettingMod
             _harmony?.UnpatchSelf();
         }
     }
+
+    [HarmonyPatch(typeof(Body), nameof(Body.UseItemInHand))]
+    public static class BlockAttackPatch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix()
+        {
+            if (ExpiePettingController.Instance != null && ExpiePettingController.Instance.IsInteracting)
+            {
+                // Suppress clawing/punching/item use while holding drag button or actively dragging
+                return false;
+            }
+            return true;
+        }
+    }
 }
+
