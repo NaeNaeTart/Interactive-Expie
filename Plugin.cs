@@ -60,31 +60,58 @@ namespace ExpiePettingMod
         [HarmonyPostfix]
         public static void Postfix(MoodleManager __instance)
         {
-            if (ExpiePettingController.Instance != null && ExpiePettingController.Instance.IsPettingRecently)
+            if (ExpiePettingController.Instance == null) return;
+
+            // Fetch the specific body this MoodleManager is rendering for
+            Body? body = null;
+            FieldInfo bodyField = typeof(MoodleManager).GetField("body", BindingFlags.Instance | BindingFlags.NonPublic);
+            if (bodyField != null)
             {
-                if (ExpiePettingController.Instance.IsPettingHealthy)
+                body = bodyField.GetValue(__instance) as Body;
+            }
+            if (body == null && PlayerCamera.main != null)
+            {
+                body = PlayerCamera.main.body;
+            }
+
+            if (body == null) return;
+
+            bool isPermanent = ExpiePettingController.Instance.IsPermanentlyIndifferent(body);
+            float sat = ExpiePettingController.Instance.GetPettingSaturation(body);
+
+            if (ExpiePettingController.Instance.IsPettingRecently)
+            {
+                if (!ExpiePettingController.Instance.IsPettingHealthy)
                 {
-                    float sat = ExpiePettingController.Instance.PettingSaturation;
-                    if (sat >= 100f)
+                    // Show "Irritated Wounds" if petting unhealthy, even if indifferent
+                    __instance.AddMoodle(3, "pain", "Irritated Wounds", "This expie's raw skin wounds are being touched or rubbed, causing intense physical distress!");
+                }
+                else
+                {
+                    if (isPermanent)
                     {
-                        // Intensity 2 (orange/neutral/indifferent warning color)
-                        __instance.AddMoodle(2, "happy", "Petting Satiety", "This expie has been petted so much that they are now completely indifferent and over-stimulated. Petting grants no mood boost.");
+                        __instance.AddMoodle(2, "happy", "Petting Satiety", "This expie has been petted so much that they are now permanently indifferent. Petting grants no mood boost.");
                     }
                     else if (sat >= 50f)
                     {
-                        // Intensity 4 (light green color)
                         __instance.AddMoodle(4, "happy", "Satiating Petting", "This expie is starting to get tired of being petted, reducing the comforting effect.");
                     }
                     else
                     {
-                        // Intensity 5 (positive green background color)
                         __instance.AddMoodle(5, "happy", "Being Petted", "This expie is actively receiving gentle, comforting physical contact, lowering stress and reducing pain.");
                     }
                 }
-                else
+            }
+            else
+            {
+                // Not actively petting recently, but display persistent/decaying moodles
+                if (isPermanent)
                 {
-                    // intensity 3 gives a critical/warning red background, "pain" or "shock" icon
-                    __instance.AddMoodle(3, "pain", "Irritated Wounds", "This expie's raw skin wounds are being touched or rubbed, causing intense physical distress!");
+                    __instance.AddMoodle(2, "happy", "Petting Satiety", "This expie has been petted so much that they are now permanently indifferent. Petting grants no mood boost.");
+                }
+                else if (sat >= 50f)
+                {
+                    __instance.AddMoodle(4, "happy", "Satiating Petting", "This expie is starting to get tired of being petted, reducing the comforting effect.");
                 }
             }
         }

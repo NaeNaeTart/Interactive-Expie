@@ -22,12 +22,15 @@ This mod introduces custom physics dragging/tugging forces, petting gestures, co
 *   **Happy Cooing**: Healthy subjects express deep contentment through soft sighs, purrs, or high-pitched cozy whimpers.
 
 ### 3. 🥱 Petting Saturation & Satiety
+*   **Per-Body Satiety Tracking**: Satiety levels are tracked independently for each specific Expie body instance, allowing you to interact with multiple subjects naturally.
 *   **Comfort Fatigue**: Over-petting causes the expie to gradually grow tired of physical contact. Satiety accumulates over continuous stroking.
 *   **Diminishing Comfort Efficiency**: 
     *   **0% to 50% Satiety**: Full comfort and maximum mood boost efficiency.
     *   **50% to 100% Satiety**: Satiety sets in, smoothly scaling comfort and healing efficiency down to `0%`.
     *   **100% Satiety (Over-stimulation)**: The expie is completely indifferent. No mood upgrades, pain relief, or happy vocalizations are triggered.
-*   **Satiety Cool Down**: Satiety slowly decays over time when the subject is left resting.
+*   **Persistent Moodles & Decay**:
+    *   **Satiating Petting Moodle**: Once satiety reaches `50%`, the light-green `Satiating Petting` moodle remains continuously visible on the HUD, even when you stop petting, until it slowly decays back below the `50%` threshold.
+    *   **Permanent Indifference Moodle**: Once satiety reaches `100%` (indifference is triggered), it is permanently locked at `100%` for that specific Expie body and never decays. The orange `Petting Satiety` moodle remains visible permanently on the HUD for that subject body.
 
 ### 🩹 Sensory Pain & Wounded Reactions
 *   **Hypersensitivity**: Petting a body part with skin damage (active wounds or burns) triggers intense localized pain spikes, adrenaline shock surges, and a severe drop in happiness.
@@ -57,7 +60,7 @@ A standard BepInEx config file is generated automatically at `BepInEx/config/exp
 | **ModifierKey** | KeyCode | `LeftAlt` | The key that must be held down to drag or pet. Set to `None` to use Left-Click directly without a modifier. |
 | **PullStrength** | float | `120.0` | How hard the mouse physically pulls/tugs body parts. |
 | **AutoReleaseDistance** | float | `1.25` | The distance a limb can be pulled before your grip automatically slips and releases. |
-| **HappinessGainRate** | float | `1.5` | How fast petting a healthy limb increases subject happiness per second. |
+| **HappinessGainRate** | float | `0.3` | How fast petting a healthy limb increases subject happiness per second. |
 | **PainIncreaseRate** | float | `25.0` | How fast petting a damaged limb spikes pain per second. |
 | **StressDecreaseRate** | float | `0.5` | How fast petting decreases trauma/stress per second. |
 | **EnableHappyWhimpers** | bool | `true` | Should the subject make soft coos, sighs, and happy noises when petted? |

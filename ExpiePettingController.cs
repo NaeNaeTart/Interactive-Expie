@@ -31,9 +31,61 @@ namespace ExpiePettingMod
         private List<JointAnchorState> _activeJointAnchors = new List<JointAnchorState>();
 
         private float _pettingSaturation;
+        private Dictionary<Body, float> _bodySatiety = new Dictionary<Body, float>();
+        private HashSet<Body> _permanentlyIndifferentBodies = new HashSet<Body>();
+
         public bool IsPettingRecently => (Time.time - _lastActivePetTime) < 1.5f;
         public bool IsPettingHealthy => _isPettingHealthy;
         public float PettingSaturation => _pettingSaturation;
+
+        public float GetPettingSaturation(Body? body)
+        {
+            if (body == null) return 0f;
+            if (_permanentlyIndifferentBodies.Contains(body)) return 100f;
+            if (_bodySatiety.TryGetValue(body, out float sat))
+            {
+                return sat;
+            }
+            return 0f;
+        }
+
+        public bool IsPermanentlyIndifferent(Body? body)
+        {
+            return body != null && _permanentlyIndifferentBodies.Contains(body);
+        }
+
+        private void CleanupDestroyedBodies()
+        {
+            _permanentlyIndifferentBodies.RemoveWhere(b => b == null || b.gameObject == null);
+
+            List<Body> toRemove = new List<Body>();
+            foreach (var kvp in _bodySatiety)
+            {
+                if (kvp.Key == null || kvp.Key.gameObject == null)
+                {
+                    toRemove.Add(kvp.Key!);
+                }
+            }
+            foreach (Body b in toRemove)
+            {
+                _bodySatiety.Remove(b);
+            }
+        }
+
+        private void DecayAllSatieties(Body? activeBody)
+        {
+            List<Body> keys = new List<Body>(_bodySatiety.Keys);
+            foreach (Body b in keys)
+            {
+                if (b == null || b == activeBody || _permanentlyIndifferentBodies.Contains(b))
+                {
+                    continue;
+                }
+                float sat = _bodySatiety[b];
+                sat = Mathf.Max(0f, sat - Time.deltaTime * Plugin.Cfg.PettingDecayRate.Value);
+                _bodySatiety[b] = sat;
+            }
+        }
 
         private static readonly List<string> HappyLines = new List<string>
         {
@@ -80,10 +132,14 @@ namespace ExpiePettingMod
         private void Update()
         {
             Body? activeBody = FindActiveBody();
+
+            CleanupDestroyedBodies();
+
             if (activeBody == null)
             {
                 ReleaseGrab();
-                _pettingSaturation = Mathf.Max(0f, _pettingSaturation - Time.deltaTime * Plugin.Cfg.PettingDecayRate.Value);
+                DecayAllSatieties(null);
+                _pettingSaturation = 0f;
                 return;
             }
 
@@ -100,14 +156,34 @@ namespace ExpiePettingMod
                 ReleaseGrab();
             }
 
-            if (isPettingThisFrame)
+            // Update satiety for the active body
+            float currentSat = 0f;
+            if (!_permanentlyIndifferentBodies.Contains(activeBody))
             {
-                _pettingSaturation = Mathf.Min(100f, _pettingSaturation + Time.deltaTime * Plugin.Cfg.PettingSaturationRate.Value);
+                _bodySatiety.TryGetValue(activeBody, out currentSat);
+                if (isPettingThisFrame)
+                {
+                    currentSat = Mathf.Min(100f, currentSat + Time.deltaTime * Plugin.Cfg.PettingSaturationRate.Value);
+                    if (currentSat >= 100f)
+                    {
+                        _permanentlyIndifferentBodies.Add(activeBody);
+                    }
+                }
+                else
+                {
+                    currentSat = Mathf.Max(0f, currentSat - Time.deltaTime * Plugin.Cfg.PettingDecayRate.Value);
+                }
+                _bodySatiety[activeBody] = currentSat;
             }
             else
             {
-                _pettingSaturation = Mathf.Max(0f, _pettingSaturation - Time.deltaTime * Plugin.Cfg.PettingDecayRate.Value);
+                currentSat = 100f;
             }
+
+            _pettingSaturation = currentSat;
+
+            // Decay other bodies (excluding activeBody and permanently indifferent ones)
+            DecayAllSatieties(activeBody);
 
             // Update stable joint anchors to follow moving animated parent bodies (like the torso)
             UpdateJointAnchors();
@@ -242,9 +318,10 @@ namespace ExpiePettingMod
 
                         // Calculate petting comfort efficiency based on current satiety level
                         float efficiency = 1f;
-                        if (_pettingSaturation >= 50f)
+                        float currentSat = GetPettingSaturation(body);
+                        if (currentSat >= 50f)
                         {
-                            efficiency = Mathf.Clamp01(1f - (_pettingSaturation - 50f) / 50f);
+                            efficiency = Mathf.Clamp01(1f - (currentSat - 50f) / 50f);
                         }
 
                         hoveredLimb.pain = Mathf.Max(0f, hoveredLimb.pain - Time.deltaTime * 7.5f * efficiency);
