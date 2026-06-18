@@ -21,13 +21,13 @@ namespace ExpiePettingMod
         private bool _isPettingHealthy;
         private List<Limb> _simulatedLimbGroup = new List<Limb>();
 
-        private struct AnchorState
+        private struct JointAnchorState
         {
-            public Rigidbody2D rb;
-            public bool originalSimulated;
-            public RigidbodyType2D originalBodyType;
+            public HingeJoint2D joint;
+            public Rigidbody2D originalConnectedBody;
+            public Vector2 originalConnectedAnchor;
         }
-        private List<AnchorState> _tempKinematicAnchors = new List<AnchorState>();
+        private List<JointAnchorState> _activeJointAnchors = new List<JointAnchorState>();
 
         public bool IsPettingRecently => (Time.time - _lastActivePetTime) < 1.5f;
         public bool IsPettingHealthy => _isPettingHealthy;
@@ -89,6 +89,9 @@ namespace ExpiePettingMod
             {
                 ReleaseGrab();
             }
+
+            // Update stable joint anchors to follow moving animated parent bodies (like the torso)
+            UpdateJointAnchors();
         }
 
         private Body? FindActiveBody()
@@ -262,17 +265,34 @@ namespace ExpiePettingMod
                                     if (limb != null && limb.rb != null)
                                     {
                                         limb.rb.simulated = true;
+
+                                        // Ignore collision with the main body to prevent catastrophic physical glitching/self-collision
+                                        if (limb.body != null)
+                                        {
+                                            Collider2D limbCollider = limb.GetComponent<Collider2D>();
+                                            if (limbCollider != null)
+                                            {
+                                                Collider2D[] bodyColliders = limb.body.GetComponents<Collider2D>();
+                                                foreach (Collider2D bodyCol in bodyColliders)
+                                                {
+                                                    if (bodyCol != null)
+                                                    {
+                                                        Physics2D.IgnoreCollision(limbCollider, bodyCol, true);
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
 
-                                // Anchor joints to animated parent body parts by temporarily making them simulated Kinematic
-                                _tempKinematicAnchors.Clear();
+                                // Establish stable world-space physics anchors for the roots of the simulated chains
+                                _activeJointAnchors.Clear();
                                 foreach (Limb limb in _simulatedLimbGroup)
                                 {
                                     if (limb != null && limb.joint != null && limb.joint.connectedBody != null)
                                     {
                                         Rigidbody2D conn = limb.joint.connectedBody;
-                                        // If the connected body is NOT part of our simulated group, it is our static anchor
+                                        // If the connected body is NOT part of our simulated group, it is an external anchor!
                                         bool isConnInGroup = false;
                                         foreach (Limb groupLimb in _simulatedLimbGroup)
                                         {
@@ -285,30 +305,17 @@ namespace ExpiePettingMod
 
                                         if (!isConnInGroup)
                                         {
-                                            // Check if we already registered this anchor to avoid duplicates
-                                            bool alreadyRegistered = false;
-                                            foreach (AnchorState state in _tempKinematicAnchors)
+                                            _activeJointAnchors.Add(new JointAnchorState
                                             {
-                                                if (state.rb == conn)
-                                                {
-                                                    alreadyRegistered = true;
-                                                    break;
-                                                }
-                                            }
+                                                joint = limb.joint,
+                                                originalConnectedBody = conn,
+                                                originalConnectedAnchor = limb.joint.connectedAnchor
+                                            });
 
-                                            if (!alreadyRegistered)
-                                            {
-                                                _tempKinematicAnchors.Add(new AnchorState
-                                                {
-                                                    rb = conn,
-                                                    originalSimulated = conn.simulated,
-                                                    originalBodyType = conn.bodyType
-                                                });
-
-                                                // Make it simulated and Kinematic so joints attach and hold perfectly in space
-                                                conn.simulated = true;
-                                                conn.bodyType = RigidbodyType2D.Kinematic;
-                                            }
+                                            // Disconnect from the unsimulated rigidbody and anchor directly to the world point
+                                            limb.joint.autoConfigureConnectedAnchor = false;
+                                            limb.joint.connectedBody = null;
+                                            limb.joint.connectedAnchor = conn.transform.TransformPoint(limb.joint.connectedAnchor);
                                         }
                                     }
                                 }
@@ -448,18 +455,18 @@ namespace ExpiePettingMod
 
         private void ReleaseActiveDragOnly()
         {
-            // Restore original states of temporary kinematic anchors
-            if (_tempKinematicAnchors != null && _tempKinematicAnchors.Count > 0)
+            // Restore original connected bodies and anchors of our active joint anchors
+            if (_activeJointAnchors != null && _activeJointAnchors.Count > 0)
             {
-                foreach (AnchorState state in _tempKinematicAnchors)
+                foreach (JointAnchorState state in _activeJointAnchors)
                 {
-                    if (state.rb != null)
+                    if (state.joint != null)
                     {
-                        state.rb.bodyType = state.originalBodyType;
-                        state.rb.simulated = state.originalSimulated;
+                        state.joint.connectedBody = state.originalConnectedBody;
+                        state.joint.connectedAnchor = state.originalConnectedAnchor;
                     }
                 }
-                _tempKinematicAnchors.Clear();
+                _activeJointAnchors.Clear();
             }
 
             if (_simulatedLimbGroup != null && _simulatedLimbGroup.Count > 0)
@@ -492,6 +499,21 @@ namespace ExpiePettingMod
             _happyPetTimer = 0f;
             _painPetTimer = 0f;
             _lastActivePetTime = 0f;
+        }
+
+        public void UpdateJointAnchors()
+        {
+            if (_activeJointAnchors != null && _activeJointAnchors.Count > 0)
+            {
+                foreach (JointAnchorState state in _activeJointAnchors)
+                {
+                    if (state.joint != null && state.originalConnectedBody != null)
+                    {
+                        // Sync world anchor with animated parent's current visual position
+                        state.joint.connectedAnchor = state.originalConnectedBody.transform.TransformPoint(state.originalConnectedAnchor);
+                    }
+                }
+            }
         }
 
         private List<Limb> GetLimbGroup(Limb grabbed, Body body)

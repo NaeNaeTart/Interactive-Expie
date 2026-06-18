@@ -77,11 +77,65 @@ namespace ExpiePettingMod
     }
 
     [HarmonyPatch(typeof(Body), "HandleVisuals", new System.Type[] { typeof(Painkillers) })]
-    public static class RestoreStandingSimulatedLimbsPatch
+    public static class HandleVisualsPatch
     {
-        [HarmonyPostfix]
-        public static void Postfix(Body __instance)
+        [HarmonyPrefix]
+        public static void Prefix(Body __instance, out Limb[]? __state)
         {
+            __state = null;
+            if (__instance.standing && __instance.limbs != null)
+            {
+                // Check if any limb is currently simulated (dragged)
+                bool hasSimulatedLimbs = false;
+                foreach (Limb limb in __instance.limbs)
+                {
+                    if (limb != null && limb.rb != null && limb.rb.simulated)
+                    {
+                        hasSimulatedLimbs = true;
+                        break;
+                    }
+                }
+
+                if (hasSimulatedLimbs)
+                {
+                    // Save the original limbs array so we can restore it in the Postfix
+                    __state = __instance.limbs;
+
+                    // Filter out any simulated (dragged) limbs so HandleVisuals doesn't reset their transforms
+                    System.Collections.Generic.List<Limb> filteredLimbs = new System.Collections.Generic.List<Limb>();
+                    foreach (Limb limb in __instance.limbs)
+                    {
+                        if (limb == null)
+                        {
+                            continue;
+                        }
+                        if (limb.rb != null && limb.rb.simulated)
+                        {
+                            continue;
+                        }
+                        filteredLimbs.Add(limb);
+                    }
+
+                    __instance.limbs = filteredLimbs.ToArray();
+                }
+            }
+        }
+
+        [HarmonyPostfix]
+        public static void Postfix(Body __instance, Limb[]? __state)
+        {
+            // Restore the original limbs array if it was modified
+            if (__state != null)
+            {
+                __instance.limbs = __state;
+            }
+
+            // Sync the joint anchors to the newly updated parent visual positions
+            if (ExpiePettingController.Instance != null)
+            {
+                ExpiePettingController.Instance.UpdateJointAnchors();
+            }
+
             if (__instance.standing && __instance.limbs != null)
             {
                 foreach (Limb limb in __instance.limbs)
