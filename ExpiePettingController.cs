@@ -30,8 +30,10 @@ namespace ExpiePettingMod
         }
         private List<JointAnchorState> _activeJointAnchors = new List<JointAnchorState>();
 
+        private float _pettingSaturation;
         public bool IsPettingRecently => (Time.time - _lastActivePetTime) < 1.5f;
         public bool IsPettingHealthy => _isPettingHealthy;
+        public float PettingSaturation => _pettingSaturation;
 
         private static readonly List<string> HappyLines = new List<string>
         {
@@ -81,19 +83,30 @@ namespace ExpiePettingMod
             if (activeBody == null)
             {
                 ReleaseGrab();
+                _pettingSaturation = Mathf.Max(0f, _pettingSaturation - Time.deltaTime * Plugin.Cfg.PettingDecayRate.Value);
                 return;
             }
 
             bool altPressed = Plugin.Cfg.ModifierKey.Value == KeyCode.None ? Input.GetMouseButton(0) : Input.GetKey(Plugin.Cfg.ModifierKey.Value);
+            bool isPettingThisFrame = false;
 
             if (altPressed)
             {
                 // Active petting and hovered limb detection
-                UpdateHoverAndPet(activeBody);
+                isPettingThisFrame = UpdateHoverAndPet(activeBody);
             }
             else
             {
                 ReleaseGrab();
+            }
+
+            if (isPettingThisFrame)
+            {
+                _pettingSaturation = Mathf.Min(100f, _pettingSaturation + Time.deltaTime * Plugin.Cfg.PettingSaturationRate.Value);
+            }
+            else
+            {
+                _pettingSaturation = Mathf.Max(0f, _pettingSaturation - Time.deltaTime * Plugin.Cfg.PettingDecayRate.Value);
             }
 
             // Update stable joint anchors to follow moving animated parent bodies (like the torso)
@@ -175,15 +188,17 @@ namespace ExpiePettingMod
             return null;
         }
 
-        private void UpdateHoverAndPet(Body body)
+        private bool UpdateHoverAndPet(Body body)
         {
-            if (Camera.main == null) return;
+            if (Camera.main == null) return false;
 
             Vector3 mouseWorld3D = Camera.main.ScreenToWorldPoint(Input.mousePosition);
             Vector2 mouseWorld = new Vector2(mouseWorld3D.x, mouseWorld3D.y);
 
             // 1. Detect hovered limb (robust check supporting non-simulated standing limbs)
             Limb? hoveredLimb = DetectLimbAt(mouseWorld, body);
+
+            bool activelyPettingHealthyThisFrame = false;
 
             // 2. Handle Petting (Requires only Alt, doesn't require Click)
             if (hoveredLimb != null)
@@ -223,15 +238,27 @@ namespace ExpiePettingMod
                     if (hoveredLimb.skinHealth >= 95f)
                     {
                         // Case A: Healthy Petting!
-                        hoveredLimb.pain = Mathf.Max(0f, hoveredLimb.pain - Time.deltaTime * 7.5f);
-                        body.happiness = Mathf.Min(100f, body.happiness + Time.deltaTime * Plugin.Cfg.HappinessGainRate.Value);
-                        body.traumaAmount = Mathf.Max(0f, body.traumaAmount - Time.deltaTime * Plugin.Cfg.StressDecreaseRate.Value);
+                        activelyPettingHealthyThisFrame = true;
 
-                        _happyPetTimer += Time.deltaTime;
-                        if (_happyPetTimer >= UnityEngine.Random.Range(2.0f, 3.5f))
+                        // Calculate petting comfort efficiency based on current satiety level
+                        float efficiency = 1f;
+                        if (_pettingSaturation >= 50f)
                         {
-                            _happyPetTimer = 0f;
-                            TriggerHappyReaction(hoveredLimb);
+                            efficiency = Mathf.Clamp01(1f - (_pettingSaturation - 50f) / 50f);
+                        }
+
+                        hoveredLimb.pain = Mathf.Max(0f, hoveredLimb.pain - Time.deltaTime * 7.5f * efficiency);
+                        body.happiness = Mathf.Min(100f, body.happiness + Time.deltaTime * Plugin.Cfg.HappinessGainRate.Value * efficiency);
+                        body.traumaAmount = Mathf.Max(0f, body.traumaAmount - Time.deltaTime * Plugin.Cfg.StressDecreaseRate.Value * efficiency);
+
+                        if (efficiency > 0f)
+                        {
+                            _happyPetTimer += Time.deltaTime * efficiency;
+                            if (_happyPetTimer >= UnityEngine.Random.Range(2.0f, 3.5f))
+                            {
+                                _happyPetTimer = 0f;
+                                TriggerHappyReaction(hoveredLimb);
+                            }
                         }
                     }
                     else
@@ -350,6 +377,7 @@ namespace ExpiePettingMod
             }
 
             _lastMouseWorldPos = mouseWorld;
+            return activelyPettingHealthyThisFrame;
         }
 
         private void UpdateActiveDrag(Vector2 mouseWorld, Body body)

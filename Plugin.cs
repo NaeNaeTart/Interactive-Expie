@@ -64,8 +64,22 @@ namespace ExpiePettingMod
             {
                 if (ExpiePettingController.Instance.IsPettingHealthy)
                 {
-                    // intensity 5 gives a positive green/happy background, "happy" is the built-in cute smiley icon
-                    __instance.AddMoodle(5, "happy", "Being Petted", "This expie is actively receiving gentle, comforting physical contact, lowering stress and reducing pain.");
+                    float sat = ExpiePettingController.Instance.PettingSaturation;
+                    if (sat >= 100f)
+                    {
+                        // Intensity 2 (orange/neutral/indifferent warning color)
+                        __instance.AddMoodle(2, "happy", "Petting Satiety", "This expie has been petted so much that they are now completely indifferent and over-stimulated. Petting grants no mood boost.");
+                    }
+                    else if (sat >= 50f)
+                    {
+                        // Intensity 4 (light green color)
+                        __instance.AddMoodle(4, "happy", "Satiating Petting", "This expie is starting to get tired of being petted, reducing the comforting effect.");
+                    }
+                    else
+                    {
+                        // Intensity 5 (positive green background color)
+                        __instance.AddMoodle(5, "happy", "Being Petted", "This expie is actively receiving gentle, comforting physical contact, lowering stress and reducing pain.");
+                    }
                 }
                 else
                 {
