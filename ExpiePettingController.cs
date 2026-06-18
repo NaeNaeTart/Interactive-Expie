@@ -19,6 +19,7 @@ namespace ExpiePettingMod
         private bool _grabbedLimbSimulated;
         private float _lastActivePetTime;
         private bool _isPettingHealthy;
+        private List<Limb> _simulatedLimbGroup = new List<Limb>();
 
         public bool IsPettingRecently => (Time.time - _lastActivePetTime) < 1.5f;
         public bool IsPettingHealthy => _isPettingHealthy;
@@ -242,23 +243,20 @@ namespace ExpiePettingMod
                         _lastMouseWorldPos = mouseWorld;
                         _lastLineTriggerTime = Time.time;
 
-                        // If standing, temporarily simulate ONLY if it's a non-vital extremity (arms or legs) to prevent glitching
+                        // If standing, temporarily simulate the entire limb group to prevent separation/detachment
                         if (hoveredLimb.body != null && hoveredLimb.body.standing)
                         {
-                            bool isTuggableLimb = hoveredLimb.isArm || hoveredLimb.isLegLimb || (!hoveredLimb.isVital && !hoveredLimb.isHead && !hoveredLimb.isAbdomen);
-                            if (isTuggableLimb)
+                            _simulatedLimbGroup = GetLimbGroup(hoveredLimb, hoveredLimb.body);
+                            if (_simulatedLimbGroup.Count > 0)
                             {
-                                _grabbedLimbSimulated = true;
-                                hoveredLimb.rb.simulated = true;
+                                foreach (Limb limb in _simulatedLimbGroup)
+                                {
+                                    if (limb != null && limb.rb != null)
+                                    {
+                                        limb.rb.simulated = true;
+                                    }
+                                }
                             }
-                            else
-                            {
-                                _grabbedLimbSimulated = false;
-                            }
-                        }
-                        else
-                        {
-                            _grabbedLimbSimulated = false;
                         }
                     }
                 }
@@ -394,6 +392,19 @@ namespace ExpiePettingMod
 
         private void ReleaseActiveDragOnly()
         {
+            if (_simulatedLimbGroup != null && _simulatedLimbGroup.Count > 0)
+            {
+                foreach (Limb limb in _simulatedLimbGroup)
+                {
+                    if (limb != null && limb.rb != null)
+                    {
+                        limb.rb.simulated = false;
+                        limb.rb.velocity = Vector2.zero;
+                        limb.rb.angularVelocity = 0f;
+                    }
+                }
+                _simulatedLimbGroup.Clear();
+            }
             if (_grabbedLimb != null && _grabbedLimbSimulated)
             {
                 _grabbedLimb.rb.simulated = false;
@@ -411,6 +422,49 @@ namespace ExpiePettingMod
             _happyPetTimer = 0f;
             _painPetTimer = 0f;
             _lastActivePetTime = 0f;
+        }
+
+        private List<Limb> GetLimbGroup(Limb grabbed, Body body)
+        {
+            List<Limb> group = new List<Limb>();
+            if (body == null || body.limbs == null || grabbed == null) return group;
+            int index = Array.IndexOf(body.limbs, grabbed);
+            if (index < 0) return group;
+
+            if (grabbed.isArm)
+            {
+                // Determine if Front Arm (3, 4, 5) or Back Arm (6, 7, 8)
+                int start = (index >= 3 && index <= 5) ? 3 : 6;
+                for (int i = start; i < start + 3; i++)
+                {
+                    if (i < body.limbs.Length && body.limbs[i] != null && !body.limbs[i].dismembered)
+                    {
+                        group.Add(body.limbs[i]);
+                    }
+                }
+            }
+            else if (grabbed.isLegLimb)
+            {
+                // Determine if Front Leg (9, 10, 11) or Back Leg (12, 13, 14)
+                int start = (index >= 9 && index <= 11) ? 9 : 12;
+                for (int i = start; i < start + 3; i++)
+                {
+                    if (i < body.limbs.Length && body.limbs[i] != null && !body.limbs[i].dismembered)
+                    {
+                        group.Add(body.limbs[i]);
+                    }
+                }
+            }
+            else
+            {
+                // Fallback for non-vital extremity if it's not strictly categorized as arm/leg but is tuggable
+                bool isTuggableLimb = !grabbed.isVital && !grabbed.isHead && !grabbed.isAbdomen;
+                if (isTuggableLimb)
+                {
+                    group.Add(grabbed);
+                }
+            }
+            return group;
         }
     }
 }
