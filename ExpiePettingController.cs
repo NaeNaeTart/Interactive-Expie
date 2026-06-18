@@ -16,7 +16,7 @@ namespace ExpiePettingMod
         private float _happyPetTimer;
         private float _painPetTimer;
         private float _lastLineTriggerTime;
-        private bool _tempSimulated;
+        private bool _grabbedLimbSimulated;
 
         private static readonly List<string> HappyLines = new List<string>
         {
@@ -61,22 +61,11 @@ namespace ExpiePettingMod
             if (activeBody == null)
             {
                 ReleaseGrab();
-                RestoreLimbSimulation(null);
                 return;
             }
 
             bool modifierPressed = Plugin.Cfg.ModifierKey.Value == KeyCode.None || Input.GetKey(Plugin.Cfg.ModifierKey.Value);
             bool mousePressed = Input.GetMouseButton(0);
-
-            // Handle temporary limb simulation to allow dragging while standing
-            if (modifierPressed && activeBody.standing)
-            {
-                EnsureLimbSimulation(activeBody);
-            }
-            else if (!modifierPressed || !activeBody.standing)
-            {
-                RestoreLimbSimulation(activeBody);
-            }
 
             if (modifierPressed && mousePressed)
             {
@@ -98,41 +87,6 @@ namespace ExpiePettingMod
         private Body? FindActiveBody()
         {
             return FindObjectOfType<Body>();
-        }
-
-        private void EnsureLimbSimulation(Body body)
-        {
-            if (!_tempSimulated)
-            {
-                _tempSimulated = true;
-                foreach (Limb limb in body.limbs)
-                {
-                    if (limb != null && !limb.dismembered)
-                    {
-                        limb.rb.simulated = true;
-                    }
-                }
-            }
-        }
-
-        private void RestoreLimbSimulation(Body? body)
-        {
-            if (_tempSimulated)
-            {
-                _tempSimulated = false;
-                if (body != null && body.standing)
-                {
-                    foreach (Limb limb in body.limbs)
-                    {
-                        if (limb != null && !limb.dismembered)
-                        {
-                            limb.rb.simulated = false;
-                            limb.rb.velocity = Vector2.zero;
-                            limb.rb.angularVelocity = 0f;
-                        }
-                    }
-                }
-            }
         }
 
         private void TryGrabLimb()
@@ -162,6 +116,17 @@ namespace ExpiePettingMod
                     _painPetTimer = 0f;
                     _lastMouseWorldPos = mouseWorld;
                     _lastLineTriggerTime = Time.time;
+
+                    // If standing, temporarily simulate ONLY the grabbed limb
+                    if (limb.body != null && limb.body.standing)
+                    {
+                        _grabbedLimbSimulated = true;
+                        limb.rb.simulated = true;
+                    }
+                    else
+                    {
+                        _grabbedLimbSimulated = false;
+                    }
                 }
             }
         }
@@ -332,8 +297,15 @@ namespace ExpiePettingMod
 
         private void ReleaseGrab()
         {
+            if (_grabbedLimb != null && _grabbedLimbSimulated)
+            {
+                _grabbedLimb.rb.simulated = false;
+                _grabbedLimb.rb.velocity = Vector2.zero;
+                _grabbedLimb.rb.angularVelocity = 0f;
+            }
             _grabbedLimb = null;
             _isDragging = false;
+            _grabbedLimbSimulated = false;
             _happyPetTimer = 0f;
             _painPetTimer = 0f;
         }
