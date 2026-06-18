@@ -21,6 +21,14 @@ namespace ExpiePettingMod
         private bool _isPettingHealthy;
         private List<Limb> _simulatedLimbGroup = new List<Limb>();
 
+        private struct AnchorState
+        {
+            public Rigidbody2D rb;
+            public bool originalSimulated;
+            public RigidbodyType2D originalBodyType;
+        }
+        private List<AnchorState> _tempKinematicAnchors = new List<AnchorState>();
+
         public bool IsPettingRecently => (Time.time - _lastActivePetTime) < 1.5f;
         public bool IsPettingHealthy => _isPettingHealthy;
 
@@ -256,6 +264,54 @@ namespace ExpiePettingMod
                                         limb.rb.simulated = true;
                                     }
                                 }
+
+                                // Anchor joints to animated parent body parts by temporarily making them simulated Kinematic
+                                _tempKinematicAnchors.Clear();
+                                foreach (Limb limb in _simulatedLimbGroup)
+                                {
+                                    if (limb != null && limb.joint != null && limb.joint.connectedBody != null)
+                                    {
+                                        Rigidbody2D conn = limb.joint.connectedBody;
+                                        // If the connected body is NOT part of our simulated group, it is our static anchor
+                                        bool isConnInGroup = false;
+                                        foreach (Limb groupLimb in _simulatedLimbGroup)
+                                        {
+                                            if (groupLimb != null && groupLimb.rb == conn)
+                                            {
+                                                isConnInGroup = true;
+                                                break;
+                                            }
+                                        }
+
+                                        if (!isConnInGroup)
+                                        {
+                                            // Check if we already registered this anchor to avoid duplicates
+                                            bool alreadyRegistered = false;
+                                            foreach (AnchorState state in _tempKinematicAnchors)
+                                            {
+                                                if (state.rb == conn)
+                                                {
+                                                    alreadyRegistered = true;
+                                                    break;
+                                                }
+                                            }
+
+                                            if (!alreadyRegistered)
+                                            {
+                                                _tempKinematicAnchors.Add(new AnchorState
+                                                {
+                                                    rb = conn,
+                                                    originalSimulated = conn.simulated,
+                                                    originalBodyType = conn.bodyType
+                                                });
+
+                                                // Make it simulated and Kinematic so joints attach and hold perfectly in space
+                                                conn.simulated = true;
+                                                conn.bodyType = RigidbodyType2D.Kinematic;
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -392,6 +448,20 @@ namespace ExpiePettingMod
 
         private void ReleaseActiveDragOnly()
         {
+            // Restore original states of temporary kinematic anchors
+            if (_tempKinematicAnchors != null && _tempKinematicAnchors.Count > 0)
+            {
+                foreach (AnchorState state in _tempKinematicAnchors)
+                {
+                    if (state.rb != null)
+                    {
+                        state.rb.bodyType = state.originalBodyType;
+                        state.rb.simulated = state.originalSimulated;
+                    }
+                }
+                _tempKinematicAnchors.Clear();
+            }
+
             if (_simulatedLimbGroup != null && _simulatedLimbGroup.Count > 0)
             {
                 foreach (Limb limb in _simulatedLimbGroup)

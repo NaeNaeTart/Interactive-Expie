@@ -88,9 +88,18 @@ namespace ExpiePettingMod
                 {
                     if (limb != null && !limb.dismembered && limb.rb != null && limb.rb.simulated)
                     {
-                        // Sync visual transform position and rotation with Rigidbody2D physics state
-                        limb.transform.position = limb.rb.position;
-                        limb.transform.eulerAngles = new Vector3(0f, 0f, limb.rb.rotation);
+                        if (limb.rb.bodyType == RigidbodyType2D.Kinematic)
+                        {
+                            // Kinematic anchors (e.g. torso) follow the animator's visual position/rotation
+                            limb.rb.position = limb.transform.position;
+                            limb.rb.rotation = limb.transform.eulerAngles.z;
+                        }
+                        else
+                        {
+                            // Dynamic simulated limbs follow the physical Rigidbody2D simulation state
+                            limb.transform.position = limb.rb.position;
+                            limb.transform.eulerAngles = new Vector3(0f, 0f, limb.rb.rotation);
+                        }
                     }
                 }
             }
