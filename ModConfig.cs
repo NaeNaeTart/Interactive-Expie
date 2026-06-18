@@ -12,6 +12,7 @@ namespace ExpiePettingMod
         public ConfigEntry<float> PainIncreaseRate { get; }
         public ConfigEntry<float> StressDecreaseRate { get; }
         public ConfigEntry<bool> EnableHappyWhimpers { get; }
+        public ConfigEntry<float> MinPettingSpeed { get; }
 
         public ModConfig(ConfigFile config)
         {
@@ -22,6 +23,7 @@ namespace ExpiePettingMod
             PainIncreaseRate = config.Bind("Interaction", "PainIncreaseRate", 25f, "How fast petting a damaged limb spikes pain per second.");
             StressDecreaseRate = config.Bind("Interaction", "StressDecreaseRate", 0.5f, "How fast petting decreases trauma/stress per second.");
             EnableHappyWhimpers = config.Bind("Interaction", "EnableHappyWhimpers", true, "Should the expie coo, sigh, or make happy noises when petted?");
+            MinPettingSpeed = config.Bind("Interaction", "MinPettingSpeed", 120f, "The minimum mouse speed (in screen pixels per second) required to register petting gestures. Prevents petting while the mouse is stationary.");
         }
     }
 }

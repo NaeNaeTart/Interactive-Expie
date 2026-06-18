@@ -12,6 +12,7 @@ namespace ExpiePettingMod
         private bool _isDragging;
         private Vector2 _grabOffset;
         private Vector2 _lastMouseWorldPos;
+        private Vector2 _lastMouseScreenPos;
         private float _stretchSoundCooldown;
         private float _happyPetTimer;
         private float _painPetTimer;
@@ -69,6 +70,11 @@ namespace ExpiePettingMod
             Instance = this;
         }
 
+        private void Start()
+        {
+            _lastMouseScreenPos = Input.mousePosition;
+        }
+
         private void Update()
         {
             Body? activeBody = FindActiveBody();
@@ -92,6 +98,8 @@ namespace ExpiePettingMod
 
             // Update stable joint anchors to follow moving animated parent bodies (like the torso)
             UpdateJointAnchors();
+
+            _lastMouseScreenPos = Input.mousePosition;
         }
 
         private Body? FindActiveBody()
@@ -180,59 +188,65 @@ namespace ExpiePettingMod
             // 2. Handle Petting (Requires only Alt, doesn't require Click)
             if (hoveredLimb != null)
             {
-                bool wasPettingRecently = IsPettingRecently;
-                _lastActivePetTime = Time.time;
-                _isPettingHealthy = (hoveredLimb.skinHealth >= 95f);
-
-                if (!wasPettingRecently)
+                float screenDelta = Vector2.Distance(Input.mousePosition, _lastMouseScreenPos);
+                float mouseSpeed = Time.deltaTime > 0f ? (screenDelta / Time.deltaTime) : 0f;
+                // Require active mouse movement (stroking speed above threshold) to register petting
+                if (mouseSpeed >= Plugin.Cfg.MinPettingSpeed.Value)
                 {
-                    // Instant physical feedback upon starting petting
-                    if (_isPettingHealthy)
+                    bool wasPettingRecently = IsPettingRecently;
+                    _lastActivePetTime = Time.time;
+                    _isPettingHealthy = (hoveredLimb.skinHealth >= 95f);
+
+                    if (!wasPettingRecently)
                     {
-                        if (hoveredLimb.body != null && hoveredLimb.body.conscious)
+                        // Instant physical feedback upon starting petting
+                        if (_isPettingHealthy)
                         {
-                            Sound.Play("exert" + UnityEngine.Random.Range(1, 5), hoveredLimb.rb.position, volume: 0.08f, pitchShift: true, pitch: 1.4f);
+                            if (hoveredLimb.body != null && hoveredLimb.body.conscious)
+                            {
+                                Sound.Play("exert" + UnityEngine.Random.Range(1, 5), hoveredLimb.rb.position, volume: 0.08f, pitchShift: true, pitch: 1.4f);
+                            }
+                        }
+                        else
+                        {
+                            TriggerPainReaction(hoveredLimb);
+                        }
+                    }
+
+                    // Trigger gentle organic micro-wiggle tremor on the hovered limb (only if simulated!)
+                    if (hoveredLimb.rb.simulated)
+                    {
+                        hoveredLimb.rb.AddForce(UnityEngine.Random.insideUnitCircle * 0.4f * hoveredLimb.rb.mass, ForceMode2D.Impulse);
+                    }
+
+                    // Apply petting vitals updates
+                    if (hoveredLimb.skinHealth >= 95f)
+                    {
+                        // Case A: Healthy Petting!
+                        hoveredLimb.pain = Mathf.Max(0f, hoveredLimb.pain - Time.deltaTime * 7.5f);
+                        body.happiness = Mathf.Min(100f, body.happiness + Time.deltaTime * Plugin.Cfg.HappinessGainRate.Value);
+                        body.traumaAmount = Mathf.Max(0f, body.traumaAmount - Time.deltaTime * Plugin.Cfg.StressDecreaseRate.Value);
+
+                        _happyPetTimer += Time.deltaTime;
+                        if (_happyPetTimer >= UnityEngine.Random.Range(2.0f, 3.5f))
+                        {
+                            _happyPetTimer = 0f;
+                            TriggerHappyReaction(hoveredLimb);
                         }
                     }
                     else
                     {
-                        TriggerPainReaction(hoveredLimb);
-                    }
-                }
+                        // Case B: Painful touch on skin wounds/burns!
+                        hoveredLimb.pain = Mathf.Min(100f, hoveredLimb.pain + Time.deltaTime * Plugin.Cfg.PainIncreaseRate.Value);
+                        body.shock = Mathf.Min(100f, body.shock + Time.deltaTime * 7.5f);
+                        body.happiness = Mathf.Max(-100f, body.happiness - Time.deltaTime * 12f);
 
-                // Trigger gentle organic micro-wiggle tremor on the hovered limb (only if simulated!)
-                if (hoveredLimb.rb.simulated)
-                {
-                    hoveredLimb.rb.AddForce(UnityEngine.Random.insideUnitCircle * 0.4f * hoveredLimb.rb.mass, ForceMode2D.Impulse);
-                }
-
-                // Apply petting vitals updates
-                if (hoveredLimb.skinHealth >= 95f)
-                {
-                    // Case A: Healthy Petting!
-                    hoveredLimb.pain = Mathf.Max(0f, hoveredLimb.pain - Time.deltaTime * 7.5f);
-                    body.happiness = Mathf.Min(100f, body.happiness + Time.deltaTime * Plugin.Cfg.HappinessGainRate.Value);
-                    body.traumaAmount = Mathf.Max(0f, body.traumaAmount - Time.deltaTime * Plugin.Cfg.StressDecreaseRate.Value);
-
-                    _happyPetTimer += Time.deltaTime;
-                    if (_happyPetTimer >= UnityEngine.Random.Range(2.0f, 3.5f))
-                    {
-                        _happyPetTimer = 0f;
-                        TriggerHappyReaction(hoveredLimb);
-                    }
-                }
-                else
-                {
-                    // Case B: Painful touch on skin wounds/burns!
-                    hoveredLimb.pain = Mathf.Min(100f, hoveredLimb.pain + Time.deltaTime * Plugin.Cfg.PainIncreaseRate.Value);
-                    body.shock = Mathf.Min(100f, body.shock + Time.deltaTime * 7.5f);
-                    body.happiness = Mathf.Max(-100f, body.happiness - Time.deltaTime * 12f);
-
-                    _painPetTimer += Time.deltaTime;
-                    if (_painPetTimer >= UnityEngine.Random.Range(0.8f, 1.5f))
-                    {
-                        _painPetTimer = 0f;
-                        TriggerPainReaction(hoveredLimb);
+                        _painPetTimer += Time.deltaTime;
+                        if (_painPetTimer >= UnityEngine.Random.Range(0.8f, 1.5f))
+                        {
+                            _painPetTimer = 0f;
+                            TriggerPainReaction(hoveredLimb);
+                        }
                     }
                 }
             }
@@ -348,6 +362,33 @@ namespace ExpiePettingMod
 
             Vector2 limbPos = _grabbedLimb.rb.position;
             Vector2 targetPos = mouseWorld - _grabOffset;
+
+            // Prevent flying cheats when ragdolled by clamping the target Y-coordinate near the ground
+            if (body != null && !body.standing)
+            {
+                // Raycast from above the target's horizontal position down to find ground level
+                float checkStartX = targetPos.x;
+                float checkStartY = limbPos.y + 6f;
+                RaycastHit2D hit = Physics2D.Raycast(new Vector2(checkStartX, checkStartY), Vector2.down, 18f, LayerMask.GetMask("Ground"));
+                if (hit.collider != null)
+                {
+                    float groundY = hit.point.y;
+                    float maxAllowedY = groundY + 1.1f; // Max height for dragged limbs
+                    if (targetPos.y > maxAllowedY)
+                    {
+                        targetPos.y = maxAllowedY;
+                    }
+                }
+                else
+                {
+                    // Fallback if no ground found under the target: clamp target Y to current limb Y to block pulling up
+                    if (targetPos.y > limbPos.y)
+                    {
+                        targetPos.y = limbPos.y;
+                    }
+                }
+            }
+
             Vector2 diff = targetPos - limbPos;
             float dist = diff.magnitude;
 
@@ -368,6 +409,33 @@ namespace ExpiePettingMod
                 float springK = Plugin.Cfg.PullStrength.Value;
                 float damper = 9.5f; // Cushioned dampening for ultra soft touch
                 Vector2 force = diff * springK - _grabbedLimb.rb.velocity * damper;
+
+                // Limit vertical lifting force when ragdolled to prevent flying cheats
+                if (body != null && !body.standing)
+                {
+                    float maxAllowedHeight = 1.0f; // Max height off the ground for ragdoll torso
+                    RaycastHit2D hit = Physics2D.Raycast(body.transform.position, Vector2.down, 10f, LayerMask.GetMask("Ground"));
+                    if (hit.collider != null)
+                    {
+                        float height = hit.distance;
+                        if (height > maxAllowedHeight)
+                        {
+                            if (force.y > 0f)
+                            {
+                                // Blend the upward force down to zero based on how far we exceed the max height
+                                float excess = height - maxAllowedHeight;
+                                float scale = Mathf.Clamp01(1f - excess * 2.5f); // fully cuts off vertical force within 0.4f units of excess
+                                force.y *= scale;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // If no ground detected at all beneath the body, disable upward force entirely
+                        if (force.y > 0f) force.y = 0f;
+                    }
+                }
+
                 _grabbedLimb.rb.AddForce(force * _grabbedLimb.rb.mass);
             }
 
