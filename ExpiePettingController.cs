@@ -144,14 +144,21 @@ namespace ExpiePettingMod
             Vector3 mouseWorld3D = Camera.main.ScreenToWorldPoint(Input.mousePosition);
             Vector2 mouseWorld = new Vector2(mouseWorld3D.x, mouseWorld3D.y);
 
+            float mouseDelta = Vector2.Distance(_lastMouseWorldPos, mouseWorld);
+            float mouseSpeed = mouseDelta / Time.deltaTime;
+            bool isPettingSpeed = mouseSpeed > 0.35f && mouseSpeed < 14f;
+
             Vector2 limbPos = _grabbedLimb.rb.position;
             Vector2 targetPos = mouseWorld - _grabOffset;
             Vector2 diff = targetPos - limbPos;
             float dist = diff.magnitude;
 
             // ⚠️ Gentle Constraint: Automatically release if pulled too hard (grip slips!)
+            // We expand the threshold while actively petting/stroking back and forth so the grip doesn't slip off.
             float maxAllowedDistance = Plugin.Cfg.AutoReleaseDistance.Value;
-            if (dist > maxAllowedDistance)
+            float releaseThreshold = isPettingSpeed ? maxAllowedDistance * 2.2f : maxAllowedDistance;
+
+            if (dist > releaseThreshold)
             {
                 // Play slipping/stretch sound on release
                 Sound.Play("stretch", limbPos, volume: 0.35f, pitchShift: true);
@@ -194,10 +201,7 @@ namespace ExpiePettingMod
             }
 
             // 3. Petting detection based on cursor movement back and forth
-            float mouseDelta = Vector2.Distance(_lastMouseWorldPos, mouseWorld);
-            float mouseSpeed = mouseDelta / Time.deltaTime;
-
-            if (mouseSpeed > 0.35f && mouseSpeed < 14f && dist < maxAllowedDistance * 0.7f)
+            if (isPettingSpeed && dist < releaseThreshold * 0.85f)
             {
                 // Trigger a tiny micro-movement tremor to show physical touch feedback
                 _grabbedLimb.rb.AddForce(UnityEngine.Random.insideUnitCircle * 5f * _grabbedLimb.rb.mass);
