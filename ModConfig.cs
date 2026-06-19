@@ -26,7 +26,7 @@ namespace ExpiePettingMod
             StressDecreaseRate = config.Bind("Interaction", "StressDecreaseRate", 0.5f, "How fast petting decreases trauma/stress per second.");
             EnableHappyWhimpers = config.Bind("Interaction", "EnableHappyWhimpers", true, "Should the expie coo, sigh, or make happy noises when petted?");
             MinPettingSpeed = config.Bind("Interaction", "MinPettingSpeed", 120f, "The minimum mouse speed (in screen pixels per second) required to register petting gestures. Prevents petting while the mouse is stationary.");
-            PettingSaturationRate = config.Bind("Interaction", "PettingSaturationRate", 5.0f, "How fast petting saturation increases per second of continuous healthy petting (from 0 to 100). Default: 5.0 (20 seconds to full saturation).");
+            PettingSaturationRate = config.Bind("Interaction", "PettingSaturationRate", 2.5f, "How fast petting saturation/satiety increases per second of continuous healthy petting (from 0 to 100). Default: 2.5 (40 seconds to full saturation).");
             PettingDecayRate = config.Bind("Interaction", "PettingDecayRate", 2.0f, "How fast petting saturation decays per second when not being petted. Default: 2.0 (50 seconds to fully cool down from 100).");
         }
     }

@@ -33,10 +33,43 @@ namespace ExpiePettingMod
         private float _pettingSaturation;
         private Dictionary<Body, float> _bodySatiety = new Dictionary<Body, float>();
         private HashSet<Body> _permanentlyIndifferentBodies = new HashSet<Body>();
+        private Dictionary<Body, float> _lastActivePetTimePerBody = new Dictionary<Body, float>();
+        private Dictionary<Body, bool> _isPettingHealthyPerBody = new Dictionary<Body, bool>();
 
-        public bool IsPettingRecently => (Time.time - _lastActivePetTime) < 1.5f;
-        public bool IsPettingHealthy => _isPettingHealthy;
+        public bool IsPettingRecently => IsPettingRecentlyFor(null);
+        public bool IsPettingHealthy => IsPettingHealthyFor(null);
         public float PettingSaturation => _pettingSaturation;
+
+        public bool IsPettingRecentlyFor(Body? body)
+        {
+            if (body == null)
+            {
+                float newestTime = 0f;
+                foreach (float t in _lastActivePetTimePerBody.Values)
+                {
+                    if (t > newestTime) newestTime = t;
+                }
+                return (Time.time - newestTime) < 1.5f;
+            }
+            if (_lastActivePetTimePerBody.TryGetValue(body, out float lastTime))
+            {
+                return (Time.time - lastTime) < 1.5f;
+            }
+            return false;
+        }
+
+        public bool IsPettingHealthyFor(Body? body)
+        {
+            if (body == null)
+            {
+                return _isPettingHealthy;
+            }
+            if (_isPettingHealthyPerBody.TryGetValue(body, out bool healthy))
+            {
+                return healthy;
+            }
+            return false;
+        }
 
         public float GetPettingSaturation(Body? body)
         {
@@ -69,6 +102,33 @@ namespace ExpiePettingMod
             foreach (Body b in toRemove)
             {
                 _bodySatiety.Remove(b);
+            }
+
+            // Cleanup new per-body dictionaries
+            List<Body> petTimeKeysToRemove = new List<Body>();
+            foreach (var kvp in _lastActivePetTimePerBody)
+            {
+                if (kvp.Key == null || kvp.Key.gameObject == null)
+                {
+                    petTimeKeysToRemove.Add(kvp.Key!);
+                }
+            }
+            foreach (Body b in petTimeKeysToRemove)
+            {
+                _lastActivePetTimePerBody.Remove(b);
+            }
+
+            List<Body> petHealthKeysToRemove = new List<Body>();
+            foreach (var kvp in _isPettingHealthyPerBody)
+            {
+                if (kvp.Key == null || kvp.Key.gameObject == null)
+                {
+                    petHealthKeysToRemove.Add(kvp.Key!);
+                }
+            }
+            foreach (Body b in petHealthKeysToRemove)
+            {
+                _isPettingHealthyPerBody.Remove(b);
             }
         }
 
@@ -131,25 +191,16 @@ namespace ExpiePettingMod
 
         private void Update()
         {
-            Body? activeBody = FindActiveBody();
-
             CleanupDestroyedBodies();
-
-            if (activeBody == null)
-            {
-                ReleaseGrab();
-                DecayAllSatieties(null);
-                _pettingSaturation = 0f;
-                return;
-            }
 
             bool altPressed = Plugin.Cfg.ModifierKey.Value == KeyCode.None ? Input.GetMouseButton(0) : Input.GetKey(Plugin.Cfg.ModifierKey.Value);
             bool isPettingThisFrame = false;
+            Body? activeBody = null;
 
             if (altPressed)
             {
                 // Active petting and hovered limb detection
-                isPettingThisFrame = UpdateHoverAndPet(activeBody);
+                isPettingThisFrame = UpdateHoverAndPet(out Limb? hoveredLimb, out activeBody);
             }
             else
             {
@@ -157,30 +208,37 @@ namespace ExpiePettingMod
             }
 
             // Update satiety for the active body
-            float currentSat = 0f;
-            if (!_permanentlyIndifferentBodies.Contains(activeBody))
+            if (activeBody != null)
             {
-                _bodySatiety.TryGetValue(activeBody, out currentSat);
-                if (isPettingThisFrame)
+                float currentSat = 0f;
+                if (!_permanentlyIndifferentBodies.Contains(activeBody))
                 {
-                    currentSat = Mathf.Min(100f, currentSat + Time.deltaTime * Plugin.Cfg.PettingSaturationRate.Value);
-                    if (currentSat >= 100f)
+                    _bodySatiety.TryGetValue(activeBody, out currentSat);
+                    if (isPettingThisFrame)
                     {
-                        _permanentlyIndifferentBodies.Add(activeBody);
+                        currentSat = Mathf.Min(100f, currentSat + Time.deltaTime * Plugin.Cfg.PettingSaturationRate.Value);
+                        if (currentSat >= 100f)
+                        {
+                            _permanentlyIndifferentBodies.Add(activeBody);
+                        }
                     }
+                    else
+                    {
+                        currentSat = Mathf.Max(0f, currentSat - Time.deltaTime * Plugin.Cfg.PettingDecayRate.Value);
+                    }
+                    _bodySatiety[activeBody] = currentSat;
                 }
                 else
                 {
-                    currentSat = Mathf.Max(0f, currentSat - Time.deltaTime * Plugin.Cfg.PettingDecayRate.Value);
+                    currentSat = 100f;
                 }
-                _bodySatiety[activeBody] = currentSat;
+
+                _pettingSaturation = currentSat;
             }
             else
             {
-                currentSat = 100f;
+                _pettingSaturation = 0f;
             }
-
-            _pettingSaturation = currentSat;
 
             // Decay other bodies (excluding activeBody and permanently indifferent ones)
             DecayAllSatieties(activeBody);
@@ -211,8 +269,12 @@ namespace ExpiePettingMod
             return playerBody ?? bodies[0];
         }
 
-        private Limb? DetectLimbAt(Vector2 mouseWorld, Body body)
+        private Limb? DetectLimbAt(Vector2 mouseWorld)
         {
+            // Find all Body components in the scene
+            Body[] bodies = FindObjectsOfType<Body>();
+            if (bodies == null || bodies.Length == 0) return null;
+
             // First attempt: Physics Raycast (works when limbs are simulated / ragdoll)
             RaycastHit2D hit = Physics2D.Raycast(mouseWorld, Vector2.zero);
             if (hit.collider != null)
@@ -222,17 +284,19 @@ namespace ExpiePettingMod
                 {
                     limb = hit.collider.GetComponentInParent<Limb>();
                 }
-                if (limb != null && !limb.dismembered && limb.body == body)
+                if (limb != null && !limb.dismembered)
                 {
                     return limb;
                 }
             }
 
-            // Second attempt (Fallback): SpriteRenderer 2D Bounds Check (essential when standing up and simulated = false)
-            if (body.limbs != null)
+            // Second attempt (Fallback): SpriteRenderer 2D Bounds Check across all bodies
+            Limb? closestLimb = null;
+            float closestDist = float.MaxValue;
+
+            foreach (Body body in bodies)
             {
-                Limb? closestLimb = null;
-                float closestDist = float.MaxValue;
+                if (body == null || body.limbs == null) continue;
 
                 foreach (Limb limb in body.limbs)
                 {
@@ -258,21 +322,102 @@ namespace ExpiePettingMod
                         }
                     }
                 }
+            }
+            return closestLimb;
+        }
+
+        private Limb? DetectLimbAt(Vector2 mouseWorld, Body body)
+        {
+            if (body == null) return DetectLimbAt(mouseWorld);
+
+            // First attempt: Physics Raycast
+            RaycastHit2D hit = Physics2D.Raycast(mouseWorld, Vector2.zero);
+            if (hit.collider != null)
+            {
+                Limb limb = hit.collider.GetComponent<Limb>();
+                if (limb == null)
+                {
+                    limb = hit.collider.GetComponentInParent<Limb>();
+                }
+                if (limb != null && !limb.dismembered && limb.body == body)
+                {
+                    return limb;
+                }
+            }
+
+            // Second attempt: 2D bounds check
+            if (body.limbs != null)
+            {
+                Limb? closestLimb = null;
+                float closestDist = float.MaxValue;
+
+                foreach (Limb limb in body.limbs)
+                {
+                    if (limb == null || limb.dismembered) continue;
+
+                    SpriteRenderer sr = limb.GetComponent<SpriteRenderer>();
+                    if (sr != null)
+                    {
+                        Bounds bounds = sr.bounds;
+                        bounds.Expand(0.18f);
+
+                        if (mouseWorld.x >= bounds.min.x && mouseWorld.x <= bounds.max.x &&
+                            mouseWorld.y >= bounds.min.y && mouseWorld.y <= bounds.max.y)
+                        {
+                            float dist = Vector2.Distance(mouseWorld, limb.transform.position);
+                            if (dist < closestDist)
+                            {
+                                closestDist = dist;
+                                closestLimb = limb;
+                            }
+                        }
+                    }
+                }
                 return closestLimb;
             }
 
             return null;
         }
 
-        private bool UpdateHoverAndPet(Body body)
+        private bool UpdateHoverAndPet(out Limb? hoveredLimb, out Body? activeBody)
         {
-            if (Camera.main == null) return false;
+            hoveredLimb = null;
+            activeBody = null;
 
-            Vector3 mouseWorld3D = Camera.main.ScreenToWorldPoint(Input.mousePosition);
+            Camera activeCam = null!;
+            if (PlayerCamera.main != null)
+            {
+                activeCam = PlayerCamera.main.GetComponent<Camera>();
+            }
+            if (activeCam == null)
+            {
+                activeCam = Camera.main;
+            }
+            if (activeCam == null) return false;
+
+            Vector3 mouseWorld3D = activeCam.ScreenToWorldPoint(Input.mousePosition);
             Vector2 mouseWorld = new Vector2(mouseWorld3D.x, mouseWorld3D.y);
 
-            // 1. Detect hovered limb (robust check supporting non-simulated standing limbs)
-            Limb? hoveredLimb = DetectLimbAt(mouseWorld, body);
+            // 1. Determine hovered limb and active body
+            if (_isDragging && _grabbedLimb != null)
+            {
+                hoveredLimb = _grabbedLimb;
+                activeBody = _grabbedLimb.body;
+            }
+            else
+            {
+                hoveredLimb = DetectLimbAt(mouseWorld);
+                if (hoveredLimb != null)
+                {
+                    activeBody = hoveredLimb.body;
+                }
+            }
+
+            if (activeBody == null)
+            {
+                _lastMouseWorldPos = mouseWorld;
+                return false;
+            }
 
             bool activelyPettingHealthyThisFrame = false;
 
@@ -284,14 +429,18 @@ namespace ExpiePettingMod
                 // Require active mouse movement (stroking speed above threshold) to register petting
                 if (mouseSpeed >= Plugin.Cfg.MinPettingSpeed.Value)
                 {
-                    bool wasPettingRecently = IsPettingRecently;
-                    _lastActivePetTime = Time.time;
-                    _isPettingHealthy = (hoveredLimb.skinHealth >= 95f);
+                    bool wasPettingRecently = IsPettingRecentlyFor(activeBody);
+                    _lastActivePetTimePerBody[activeBody] = Time.time;
+                    _lastActivePetTime = Time.time; // Keep global updated as fallback
+                    
+                    bool isHealthy = (hoveredLimb.skinHealth >= 95f);
+                    _isPettingHealthyPerBody[activeBody] = isHealthy;
+                    _isPettingHealthy = isHealthy; // Keep global updated as fallback
 
                     if (!wasPettingRecently)
                     {
                         // Instant physical feedback upon starting petting
-                        if (_isPettingHealthy)
+                        if (isHealthy)
                         {
                             if (hoveredLimb.body != null && hoveredLimb.body.conscious)
                             {
@@ -318,15 +467,15 @@ namespace ExpiePettingMod
 
                         // Calculate petting comfort efficiency based on current satiety level
                         float efficiency = 1f;
-                        float currentSat = GetPettingSaturation(body);
+                        float currentSat = GetPettingSaturation(activeBody);
                         if (currentSat >= 50f)
                         {
                             efficiency = Mathf.Clamp01(1f - (currentSat - 50f) / 50f);
                         }
 
                         hoveredLimb.pain = Mathf.Max(0f, hoveredLimb.pain - Time.deltaTime * 7.5f * efficiency);
-                        body.happiness = Mathf.Min(100f, body.happiness + Time.deltaTime * Plugin.Cfg.HappinessGainRate.Value * efficiency);
-                        body.traumaAmount = Mathf.Max(0f, body.traumaAmount - Time.deltaTime * Plugin.Cfg.StressDecreaseRate.Value * efficiency);
+                        activeBody.happiness = Mathf.Min(100f, activeBody.happiness + Time.deltaTime * Plugin.Cfg.HappinessGainRate.Value * efficiency);
+                        activeBody.traumaAmount = Mathf.Max(0f, activeBody.traumaAmount - Time.deltaTime * Plugin.Cfg.StressDecreaseRate.Value * efficiency);
 
                         if (efficiency > 0f)
                         {
@@ -342,8 +491,8 @@ namespace ExpiePettingMod
                     {
                         // Case B: Painful touch on skin wounds/burns!
                         hoveredLimb.pain = Mathf.Min(100f, hoveredLimb.pain + Time.deltaTime * Plugin.Cfg.PainIncreaseRate.Value);
-                        body.shock = Mathf.Min(100f, body.shock + Time.deltaTime * 7.5f);
-                        body.happiness = Mathf.Max(-100f, body.happiness - Time.deltaTime * 12f);
+                        activeBody.shock = Mathf.Min(100f, activeBody.shock + Time.deltaTime * 7.5f);
+                        activeBody.happiness = Mathf.Max(-100f, activeBody.happiness - Time.deltaTime * 12f);
 
                         _painPetTimer += Time.deltaTime;
                         if (_painPetTimer >= UnityEngine.Random.Range(0.8f, 1.5f))
@@ -444,7 +593,7 @@ namespace ExpiePettingMod
                 else
                 {
                     // Update active drag/tug physics
-                    UpdateActiveDrag(mouseWorld, body);
+                    UpdateActiveDrag(mouseWorld, activeBody);
                 }
             }
             else
@@ -455,6 +604,12 @@ namespace ExpiePettingMod
 
             _lastMouseWorldPos = mouseWorld;
             return activelyPettingHealthyThisFrame;
+        }
+
+        // For backwards compatibility
+        private bool UpdateHoverAndPet(Body body)
+        {
+            return UpdateHoverAndPet(out _, out _);
         }
 
         private void UpdateActiveDrag(Vector2 mouseWorld, Body body)
@@ -672,6 +827,7 @@ namespace ExpiePettingMod
             _happyPetTimer = 0f;
             _painPetTimer = 0f;
             _lastActivePetTime = 0f;
+            _lastActivePetTimePerBody.Clear();
         }
 
         public void UpdateJointAnchors()

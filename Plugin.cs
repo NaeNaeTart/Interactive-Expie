@@ -78,10 +78,12 @@ namespace ExpiePettingMod
 
             bool isPermanent = ExpiePettingController.Instance.IsPermanentlyIndifferent(body);
             float sat = ExpiePettingController.Instance.GetPettingSaturation(body);
+            bool pettingRecently = ExpiePettingController.Instance.IsPettingRecentlyFor(body);
+            bool pettingHealthy = ExpiePettingController.Instance.IsPettingHealthyFor(body);
 
-            if (ExpiePettingController.Instance.IsPettingRecently)
+            if (pettingRecently)
             {
-                if (!ExpiePettingController.Instance.IsPettingHealthy)
+                if (!pettingHealthy)
                 {
                     // Show "Irritated Wounds" if petting unhealthy, even if indifferent
                     __instance.AddMoodle(3, "pain", "Irritated Wounds", "This expie's raw skin wounds are being touched or rubbed, causing intense physical distress!");

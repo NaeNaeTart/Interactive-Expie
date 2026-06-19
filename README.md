@@ -65,7 +65,7 @@ A standard BepInEx config file is generated automatically at `BepInEx/config/exp
 | **StressDecreaseRate** | float | `0.5` | How fast petting decreases trauma/stress per second. |
 | **EnableHappyWhimpers** | bool | `true` | Should the subject make soft coos, sighs, and happy noises when petted? |
 | **MinPettingSpeed** | float | `120.0` | The minimum mouse speed (in screen pixels per second) required to register petting gestures. Prevents petting while stationary. |
-| **PettingSaturationRate** | float | `5.0` | How fast petting saturation/satiety increases per second of continuous healthy petting (from 0 to 100). |
+| **PettingSaturationRate** | float | `2.5` | How fast petting saturation/satiety increases per second of continuous healthy petting (from 0 to 100). |
 | **PettingDecayRate** | float | `2.0` | How fast petting saturation decays per second when not being petted. |
 
 ---
