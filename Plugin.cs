@@ -23,9 +23,79 @@ namespace ExpiePettingMod
             // Bind configuration settings
             Cfg = new ModConfig(Config);
 
-            // Apply Harmony patches
+            // Apply Harmony patches manually with safe try-catch wrappers
             _harmony = new Harmony(PluginInfo.GUID);
-            _harmony.PatchAll(Assembly.GetExecutingAssembly());
+            
+            // 1. Patch UseItemInHand (BlockAttackPatch)
+            try
+            {
+                var original = typeof(Body).GetMethod(nameof(Body.UseItemInHand), BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                var prefix = typeof(BlockAttackPatch).GetMethod(nameof(BlockAttackPatch.Prefix), BindingFlags.Public | BindingFlags.Static);
+                if (original != null && prefix != null)
+                {
+                    _harmony.Patch(original, prefix: new HarmonyMethod(prefix));
+                    Logger.LogInfo("Successfully patched Body.UseItemInHand");
+                }
+                else
+                {
+                    Logger.LogWarning("Could not find Body.UseItemInHand or Prefix to patch.");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                Logger.LogError($"Error patching Body.UseItemInHand: {ex}");
+            }
+
+            // 2. Patch AddAllMoodles (MoodleManagerPatch)
+            try
+            {
+                var original = typeof(MoodleManager).GetMethod("AddAllMoodles", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                var postfix = typeof(MoodleManagerPatch).GetMethod(nameof(MoodleManagerPatch.Postfix), BindingFlags.Public | BindingFlags.Static);
+                if (original != null && postfix != null)
+                {
+                    _harmony.Patch(original, postfix: new HarmonyMethod(postfix));
+                    Logger.LogInfo("Successfully patched MoodleManager.AddAllMoodles");
+                }
+                else
+                {
+                    Logger.LogWarning("Could not find MoodleManager.AddAllMoodles or Postfix to patch.");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                Logger.LogError($"Error patching MoodleManager.AddAllMoodles: {ex}");
+            }
+
+            // 3. Patch HandleVisuals (HandleVisualsPatch)
+            try
+            {
+                // Attempt to find HandleVisuals with Painkillers parameter first
+                var original = typeof(Body).GetMethod("HandleVisuals", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance, null, new System.Type[] { typeof(Painkillers) }, null);
+                if (original == null)
+                {
+                    // Fallback: search for any method named HandleVisuals regardless of signature
+                    original = typeof(Body).GetMethod("HandleVisuals", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                }
+                
+                var prefix = typeof(HandleVisualsPatch).GetMethod(nameof(HandleVisualsPatch.Prefix), BindingFlags.Public | BindingFlags.Static);
+                var postfix = typeof(HandleVisualsPatch).GetMethod(nameof(HandleVisualsPatch.Postfix), BindingFlags.Public | BindingFlags.Static);
+                
+                if (original != null)
+                {
+                    _harmony.Patch(original, 
+                        prefix: prefix != null ? new HarmonyMethod(prefix) : null, 
+                        postfix: postfix != null ? new HarmonyMethod(postfix) : null);
+                    Logger.LogInfo($"Successfully patched Body.HandleVisuals ({original.GetParameters().Length} parameters)");
+                }
+                else
+                {
+                    Logger.LogWarning("Could not find Body.HandleVisuals to patch.");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                Logger.LogError($"Error patching Body.HandleVisuals: {ex}");
+            }
 
             // Add the main interaction controller to this persistent GameObject
             gameObject.AddComponent<ExpiePettingController>();
@@ -39,10 +109,8 @@ namespace ExpiePettingMod
         }
     }
 
-    [HarmonyPatch(typeof(Body), nameof(Body.UseItemInHand))]
     public static class BlockAttackPatch
     {
-        [HarmonyPrefix]
         public static bool Prefix()
         {
             if (ExpiePettingController.Instance != null && ExpiePettingController.Instance.IsInteracting)
@@ -54,10 +122,8 @@ namespace ExpiePettingMod
         }
     }
 
-    [HarmonyPatch(typeof(MoodleManager), "AddAllMoodles")]
     public static class MoodleManagerPatch
     {
-        [HarmonyPostfix]
         public static void Postfix(MoodleManager __instance)
         {
             if (ExpiePettingController.Instance == null) return;
@@ -119,10 +185,8 @@ namespace ExpiePettingMod
         }
     }
 
-    [HarmonyPatch(typeof(Body), "HandleVisuals", new System.Type[] { typeof(Painkillers) })]
     public static class HandleVisualsPatch
     {
-        [HarmonyPrefix]
         public static void Prefix(Body __instance, out Limb[]? __state)
         {
             __state = null;
@@ -164,7 +228,6 @@ namespace ExpiePettingMod
             }
         }
 
-        [HarmonyPostfix]
         public static void Postfix(Body __instance, Limb[]? __state)
         {
             // Restore the original limbs array if it was modified
